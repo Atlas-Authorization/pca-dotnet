@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AtlasPca.AspNetCore</RootNamespace>
+    <!-- net8.0 ASP.NET Core reference pack is used to compile; roll forward to the installed runtime at run time. -->
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Microsoft.AspNetCore.* as a framework reference so the base crypto lib (AtlasPca) stays dependency-light. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+  </ItemGroup>
+</Project>
