@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="AtlasPca.AspNetCore.Tests/AtlasPca.AspNetCore.Tests.csproj" />
+  <Project Path="AtlasPca.AspNetCore/AtlasPca.AspNetCore.csproj" />
+  <Project Path="AtlasPca/AtlasPca.csproj" />
+  <Project Path="Conformance/Conformance.csproj" />
+</Solution>
