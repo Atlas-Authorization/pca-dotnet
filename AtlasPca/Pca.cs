@@ -915,7 +915,7 @@ public static class Pca
         }
         var p = (Dictionary<string, object?>)pcactn!;
         v.Checks["wire"] = true;
-        foreach (var k in new[] { "version", "audience", "validity", "chain", "plan_inclusion", "leaf_signature", "counter" }) v.Checks[k] = false;
+        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" }) v.Checks[k] = false;
         bool failed = false;
         void Fail(string name, string why)
         {
@@ -946,6 +946,15 @@ public static class Pca
                 var (why, ok) = VerifyChain(chain, gi, gi != null);
                 if (ok) v.Checks["chain"] = true; else Fail("chain", why);
             }
+
+            // grant_ref_bound (normative): the signed grant_ref MUST be a non-empty string byte-equal to the id of the
+            // ROOT capability of the presented chain (cap_chain[0].id). Independent of the chain verdict; fail-closed
+            // on an empty / malformed chain. Replay state is keyed on grant_ref, so it must not be attacker-chosen.
+            if (p.TryGetValue("grant_ref", out var grefObj) && grefObj is string gref && gref.Length > 0
+                && chain.Count > 0 && chain[0] is Dictionary<string, object?> rootCap
+                && rootCap.TryGetValue("id", out var rootIdObj) && rootIdObj is string rootId
+                && string.Equals(gref, rootId, StringComparison.Ordinal)) v.Checks["grant_ref_bound"] = true;
+            else Fail("grant_ref_bound", "grant_ref is not the id of the root capability in cap_chain");
 
             var plan = (Dictionary<string, object?>)p["plan"]!;
             var action = (Dictionary<string, object?>)p["action"]!;
