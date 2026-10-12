@@ -648,6 +648,44 @@ public static class Pca
         return null;
     }
 
+    /// <summary>0.4.1: wire-shape validation of ONE threshold share's signature fields, per suite (it used to be a fixed 64-byte
+    /// <c>sig</c>, so a pure post-quantum share could never be carried). Mirrors <c>validateShareSignatureWire</c> in
+    /// packages/pca/src/pq.ts: <c>alg</c> absent == ed25519; present and not a string (JSON null included) or unknown fails;
+    /// <c>sig</c> must be canonical base64url of the suite's signature length; <c>pq_sig</c> is required (3309 bytes) for the
+    /// hybrid and must be absent otherwise. A share's <c>pq_pk</c> is NOT judged here: it is an optional echo that the threshold
+    /// check compares with the signer set. Null when well-formed, else a short reason.</summary>
+    public static string? ValidateShareSignatureWire(Dictionary<string, object?> s)
+    {
+        var (name, err) = ResolveSuite(s);
+        if (name == null) return err;
+        var suite = Pq.Suites[name];
+        if (B64uDecode(Get(s, "sig"), suite.SigBytes) == null)
+            return $"'sig' is not canonical base64url ({suite.SigBytes} bytes) for alg '{name}'";
+        if (suite.NeedsPqSig)
+        {
+            if (B64uDecode(Get(s, "pq_sig"), Pq.MlDsa65SignatureBytes) == null)
+                return $"'pq_sig' is not canonical base64url ({Pq.MlDsa65SignatureBytes} bytes) for alg '{name}'";
+        }
+        else if (s.ContainsKey("pq_sig")) return $"'pq_sig' must be absent for alg '{name}'";
+        return null;
+    }
+
+    /// <summary>0.4.1: decode a <c>PCA-Action</c> header value to the PCActn JSON text, STRICTLY (mirrors <c>decodePcaHeader</c>
+    /// in packages/pca/src/adapters.ts): non-empty, unpadded base64url (<c>A-Z a-z 0-9 - _</c> only, no <c>=</c>, no whitespace
+    /// anywhere: nothing is trimmed), length mod 4 != 1, zero unused trailing bits, and well-formed UTF-8 (no overlong forms,
+    /// no encoded surrogates, no truncated sequence; a leading BOM is kept, so the strict JSON parser refuses it). One PCActn has
+    /// exactly one header spelling. Null when invalid; never throws.</summary>
+    public static string? DecodePcaHeader(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return null;
+        var bytes = B64uDecode(value);
+        if (bytes == null) return null;
+        try { return StrictUtf8.GetString(bytes); }
+        catch (DecoderFallbackException) { return null; }
+    }
+
+    static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
     static bool MlDsaVerifyB64u(object? pkB64u, byte[] msg, object? sigB64u)
     {
         var pk = B64uDecode(pkB64u, Pq.MlDsa65PublicKeyBytes);
@@ -1102,7 +1140,9 @@ public static class Pca
                 {
                     if (shares[i] is not Dictionary<string, object?> s || Get(s, "role") is not string) return $"threshold.shares[{i}] is malformed";
                     if (B64uDecode(Get(s, "publicKey"), 32) == null) return $"threshold.shares[{i}].publicKey is not canonical base64url (32 bytes)";
-                    if (B64uDecode(Get(s, "sig"), 64) == null) return $"threshold.shares[{i}].sig is not canonical base64url (64 bytes)";
+                    // 0.4.1: the share signature is validated PER SUITE (alg absent == ed25519: 64-byte sig, no pq_sig).
+                    var shareErr = ValidateShareSignatureWire(s);
+                    if (shareErr != null) return $"threshold.shares[{i}]: {shareErr}";
                 }
             }
             return null;

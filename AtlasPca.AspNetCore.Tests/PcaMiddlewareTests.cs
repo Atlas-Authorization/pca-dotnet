@@ -231,6 +231,69 @@ public class PcaMiddlewareTests
         var (nextRan, _) = await RunBody(f, "{\"pcactn\":" + evil + "}");
         Assert.False(nextRan);
     }
+
+    // 0.4.1: the PCA-Action header is STRICT unpadded base64url of well-formed UTF-8 (primitives.pca_header). Every invalid
+    // value is the 401 "not canonical base64url" path; invalid UTF-8 used to be replaced with U+FFFD and reach the JSON parser.
+    [Fact]
+    public async Task Header_StrictBase64UrlAndUtf8_PcaHeaderVectors()
+    {
+        var f = LoadValid();
+        var prim = (Dictionary<string, object?>)Doc["primitives"]!;
+        int ran = 0;
+        foreach (var x in (List<object?>)prim["pca_header"]!)
+        {
+            var e = (Dictionary<string, object?>)x!;
+            var input = (string)e["input"]!;
+            if (input.Length == 0) continue; // an empty header is "no header" (body mode)
+            bool nextRan = false;
+            var mw = new PcaMiddleware(_ => { nextRan = true; return Task.CompletedTask; }, OptionsFor(f));
+            var ctx = NewContext();
+            ctx.Request.Headers["PCA-Action"] = input;
+            await mw.InvokeAsync(ctx);
+            var challenge = ctx.Response.Headers["WWW-Authenticate"].ToString();
+            bool refusedAsB64 = ctx.Response.StatusCode == StatusCodes.Status401Unauthorized && challenge.Contains("is not canonical base64url");
+            Assert.False(nextRan, (string)e["name"]!);
+            Assert.True((bool)e["valid"]! ? !refusedAsB64 : refusedAsB64, $"{e["name"]}: {ctx.Response.StatusCode} {challenge}");
+            ran++;
+        }
+        Assert.True(ran >= 26, $"ran {ran}");
+    }
+
+    [Fact]
+    public async Task Header_InvalidUtf8InsideAString_IsRefusedAsUndecodable()
+    {
+        var f = LoadValid();
+        // the genuine PCActn with an overlong-encoded byte pair spliced into its "aud" string: lenient decoding turned it into
+        // U+FFFD U+FFFD (valid JSON, a 403 from the verifier); strict decoding refuses the header itself.
+        var bytes = Encoding.UTF8.GetBytes(f.Json).ToList();
+        int at = f.Json.IndexOf("\"" + f.Aud + "\"", System.StringComparison.Ordinal) + 1; // inside the (ASCII) aud string
+        Assert.True(at > 0);
+        bytes.InsertRange(at, new byte[] { 0xC0, 0xAF });
+        var mw = new PcaMiddleware(_ => Task.CompletedTask, OptionsFor(f));
+        var ctx = NewContext();
+        ctx.Request.Headers["PCA-Action"] = Pca.B64u(bytes.ToArray());
+        await mw.InvokeAsync(ctx);
+        Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
+        Assert.Contains("is not canonical base64url", ctx.Response.Headers["WWW-Authenticate"].ToString());
+    }
+
+    [Theory]
+    [InlineData("   ")]
+    [InlineData(" {0}")]
+    [InlineData("{0} ")]
+    [InlineData("{0}=")]
+    public async Task Header_WhitespaceOrPadding_Returns401(string template)
+    {
+        var f = LoadValid();
+        bool nextRan = false;
+        var mw = new PcaMiddleware(_ => { nextRan = true; return Task.CompletedTask; }, OptionsFor(f));
+        var ctx = NewContext();
+        ctx.Request.Headers["PCA-Action"] = template.Replace("{0}", HeaderFor(f.Json));
+        await mw.InvokeAsync(ctx);
+        Assert.False(nextRan);
+        Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
+        Assert.Contains("is not canonical base64url", ctx.Response.Headers["WWW-Authenticate"].ToString());
+    }
 }
 
 public class PcaMiddlewareDeepNestingTests

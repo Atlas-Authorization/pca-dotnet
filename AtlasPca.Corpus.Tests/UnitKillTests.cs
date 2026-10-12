@@ -534,7 +534,7 @@ public class UnitKillTests
         var good = M(("role", "agent"), ("publicKey", B32), ("sig", B64));
         Assert.Null(W(p => p["threshold"] = M(("shares", Li(good)))));
         Assert.Equal("threshold.shares[1].publicKey is not canonical base64url (32 bytes)", W(p => p["threshold"] = M(("shares", Li(good, M(("role", "x")))))));
-        Assert.Equal("threshold.shares[1].sig is not canonical base64url (64 bytes)", W(p => p["threshold"] = M(("shares", Li(good, M(("role", "x"), ("publicKey", B32)))))));
+        Assert.Equal("threshold.shares[1]: 'sig' is not canonical base64url (64 bytes) for alg 'ed25519'", W(p => p["threshold"] = M(("shares", Li(good, M(("role", "x"), ("publicKey", B32)))))));
     }
 
     // ------------------------------------------------------------------ verdicts

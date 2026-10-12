@@ -80,14 +80,16 @@ public sealed class PcaMiddleware
         var header = ctx.Request.Headers[_options.HeaderName];
         if (header.Count > 0 && !string.IsNullOrEmpty(header[0]))
         {
-            byte[]? bytes = Pca.B64uDecode(header[0]);
-            if (bytes is null)
+            // 0.4.1: STRICT unpadded base64url of well-formed UTF-8 (Pca.DecodePcaHeader). Invalid UTF-8 used to be replaced with
+            // U+FFFD and reach the JSON parser, so one PCActn had several header spellings.
+            string? text = Pca.DecodePcaHeader(header[0]);
+            if (text is null)
                 return (null, ("invalid_request", $"The {_options.HeaderName} header is not canonical base64url."));
-            if (bytes.Length > Pca.MaxArtifactBytes)
+            if (Encoding.UTF8.GetByteCount(text) > Pca.MaxArtifactBytes)
                 return (null, ("invalid_request", $"The {_options.HeaderName} header is not a decodable PCActn: " + Pca.ArtifactSizeReason));
             try
             {
-                return (Pca.ParseStrict(Encoding.UTF8.GetString(bytes)), null);
+                return (Pca.ParseStrict(text), null);
             }
             catch (Exception ex)
             {

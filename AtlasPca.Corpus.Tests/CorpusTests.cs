@@ -11,6 +11,8 @@ public class CorpusTests
 {
     const int Chunks = 16;
     static readonly HashSet<string> Supported = new() { "ed25519", "ml-dsa-65", "hybrid-ed25519-ml-dsa-65" };
+    static readonly HashSet<string> Registered = new() { "ed25519", "ml-dsa-65", "ml-dsa-87", "hybrid-ed25519-ml-dsa-65", "hybrid-ed25519-ml-dsa-87",
+        "hybrid-nested-ed25519-ml-dsa-65", "slh-dsa-sha2-128f", "slh-dsa-sha2-256s", "hybrid-ed25519-slh-dsa-sha2-128f", "hybrid-ed25519-slh-dsa-sha2-256s" };
 
     static string Dir()
     {
@@ -39,6 +41,8 @@ public class CorpusTests
     {
         if (!v.TryGetValue("pcactn", out var po) || po is not Dictionary<string, object?> p) return null;
         var req = v.TryGetValue("requires", out var r) ? r as string : null;
+        // 0.4.1: a vector may name the suite it needs in `requires` (e.g. a threshold share under ml-dsa-87).
+        if (req != null && Registered.Contains(req) && !Supported.Contains(req)) return req;
         if (req == "pq") { var a = AlgOf(p); return Supported.Contains(a) ? null : a; }
         if (req == "pq-nonleaf" && p.TryGetValue("cap_chain", out var cc) && cc is List<object?> chain)
             foreach (var hv in chain)

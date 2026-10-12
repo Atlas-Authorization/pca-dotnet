@@ -4,6 +4,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AtlasPca.AspNetCore</RootNamespace>
+    <Version>0.4.1</Version>
     <!-- net8.0 ASP.NET Core reference pack is used to compile; roll forward to the installed runtime at run time. -->
     <RollForward>Major</RollForward>
   </PropertyGroup>

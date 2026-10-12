@@ -27,6 +27,9 @@ if (!(doc["format"] is Num f && f.Raw == "2")) { Console.WriteLine("vectors.json
 // hybrid) are NOT wired in .NET, so any vector needing a real signature verdict under them is SKIPPED
 // explicitly, per-suite — never silently passed.
 var supportedSuites = new HashSet<string> { "ed25519", "ml-dsa-65", "hybrid-ed25519-ml-dsa-65" };
+// Every registered suite in the corpus: a vector whose `requires` names one of these that .NET does not implement is skipped.
+var registeredSuites = new HashSet<string> { "ed25519", "ml-dsa-65", "ml-dsa-87", "hybrid-ed25519-ml-dsa-65", "hybrid-ed25519-ml-dsa-87",
+    "hybrid-nested-ed25519-ml-dsa-65", "slh-dsa-sha2-128f", "slh-dsa-sha2-256s", "hybrid-ed25519-slh-dsa-sha2-128f", "hybrid-ed25519-slh-dsa-sha2-256s" };
 
 static string AlgOf(Dictionary<string, object?> o) =>
     o.TryGetValue("alg", out var a) && a is string s ? s : "ed25519";
@@ -38,6 +41,8 @@ string? UnsupportedSuite(Dictionary<string, object?> v)
 {
     if (!v.TryGetValue("pcactn", out var po) || po is not Dictionary<string, object?> p) return null; // raw/core vectors
     var req = v.TryGetValue("requires", out var r) ? r as string : null;
+    // 0.4.1: a vector may name the suite it needs in `requires` (e.g. a threshold share under ml-dsa-87).
+    if (req != null && registeredSuites.Contains(req) && !supportedSuites.Contains(req)) return req;
     if (req == "pq")
     {
         var a = AlgOf(p);
@@ -247,6 +252,44 @@ foreach (var x in (List<object?>)prim["malformed"]!)
 total++;
 if (tsRan + tsSkipped < 55 || malformedRan < 80) Bad($"round-6 primitives shrank: threshold_set {tsRan + tsSkipped}, malformed {malformedRan}");
 Console.WriteLine($"round 6: threshold_set ran {tsRan}, skipped {tsSkipped}; malformed {malformedRan} clean denies");
+
+// ================= 0.4.1: policy-layer caveats (root caveats included) and the strict PCA-Action header =================
+int caveatRan = 0;
+foreach (var x in (List<object?>)prim["caveat_eval"]!)
+{
+    var e = (Dictionary<string, object?>)x!;
+    var exp = (Dictionary<string, object?>)e["expect"]!;
+    total++;
+    try
+    {
+        var r = Caveats.EvaluateCaveats(Caveats.PolicyCaveats(e.GetValueOrDefault("grant"), e.GetValueOrDefault("chain")), e.GetValueOrDefault("context"));
+        var wantFailed = ((List<object?>)exp["failed"]!).Cast<string>().ToList();
+        if (r.Ok != (bool)exp["allow"]! || !r.Failed.SequenceEqual(wantFailed))
+            Bad($"caveat_eval {e["name"]}: allow={r.Ok} failed=[{string.Join(",", r.Failed)}] want allow={exp["allow"]} failed=[{string.Join(",", wantFailed)}]");
+    }
+    catch (Exception ex) { Bad($"caveat_eval {e["name"]}: THREW {ex.GetType().Name}"); }
+    caveatRan++;
+}
+total++;
+if (caveatRan < 40) Bad($"caveat_eval primitives shrank: {caveatRan}");
+int headerRan = 0;
+foreach (var x in (List<object?>)prim["pca_header"]!)
+{
+    var e = (Dictionary<string, object?>)x!;
+    total++;
+    try
+    {
+        var got = Pca.DecodePcaHeader((string)e["input"]!);
+        bool want = (bool)e["valid"]!;
+        if ((got != null) != want) Bad($"pca_header {e["name"]}: valid={got != null} want {want}");
+        else if (got != null && got != (string)e["text"]!) Bad($"pca_header {e["name"]}: text mismatch");
+    }
+    catch (Exception ex) { Bad($"pca_header {e["name"]}: THREW {ex.GetType().Name}"); }
+    headerRan++;
+}
+total++;
+if (headerRan < 27) Bad($"pca_header primitives shrank: {headerRan}");
+Console.WriteLine($"0.4.1: caveat_eval ran {caveatRan}; pca_header ran {headerRan}");
 
 // ================= report =================
 Console.WriteLine();
