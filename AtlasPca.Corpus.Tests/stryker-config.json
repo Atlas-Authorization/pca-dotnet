@@ -1,0 +1,24 @@
+{
+  "stryker-config": {
+    "project": "AtlasPca.csproj",
+    "test-projects": [
+      "AtlasPca.Corpus.Tests.csproj"
+    ],
+    "mutation-level": "Complete",
+    "reporters": [
+      "json",
+      "progress"
+    ],
+    "concurrency": 4,
+    "thresholds": {
+      "high": 100,
+      "low": 100,
+      "break": 0
+    },
+    "ignore-mutations": [],
+    "disable-bail": false,
+    "coverage-analysis": "all",
+    "additional-timeout": 60000,
+    "test-case-filter": "Category!=Huge"
+  }
+}

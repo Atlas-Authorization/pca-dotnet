@@ -82,9 +82,10 @@ foreach (var x in vs)
     long now = long.Parse(((Num)ctx["now"]!).Raw);
     var aud = (string)ctx["aud"]!;
     var grant = (Dictionary<string, object?>)v["grant"]!;
+    List<string>? allowed = ctx.TryGetValue("allowed_suites", out var asObj) && asObj is List<object?> asl ? asl.Select(z => (string)z!).ToList() : null;
     Verdict got = v.ContainsKey("pcactn_json")
-        ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud)
-        : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud);
+        ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed)
+        : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed);
     bool ok = got.Allow == (bool)exp["allow"]! && got.Checks.Count == expChecks.Count;
     foreach (var (k, w) in expChecks)
         if (!got.Checks.TryGetValue(k, out var g) || g != (bool)w!) ok = false;
@@ -175,6 +176,78 @@ foreach (var x in (List<object?>)prim["pq_artifact"]!)
 }
 int artSkipped = artSkippedBySuite.Values.Sum();
 
+// ================= R4-01 root PQ pin: primitives.chain_pin[] (standalone Pca.VerifyChain) =================
+// Each vector drives the standalone chain API with {chain, expected_root_issuer, pq_pins, trusted_root, allowed_suites}
+// and asserts the verdict; an expected "hop 0: root suite ..." refusal is asserted EXACTLY. A vector whose verdict needs
+// a real signature under a suite .NET does not implement is SKIPPED (counted), never silently passed; vectors refused by
+// the hop-0 pin rule need no crypto and always run.
+int pinRan = 0, pinSkipped = 0;
+foreach (var x in (List<object?>)prim["chain_pin"]!)
+{
+    var cv = (Dictionary<string, object?>)x!;
+    var cname = (string)cv["name"]!;
+    var cexp = (Dictionary<string, object?>)cv["expect"]!;
+    bool wantOk = (bool)cexp["ok"]!;
+    var wantReason = cexp.TryGetValue("reason", out var rr) ? rr as string : null;
+    var cchain = (List<object?>)cv["chain"]!;
+    bool pinReason = wantReason != null && wantReason.StartsWith("hop 0: root suite");
+    if (!pinReason && cchain.Any(h => h is Dictionary<string, object?> hd && !supportedSuites.Contains(AlgOf(hd)))) { pinSkipped++; continue; }
+    total++; pinRan++;
+    IReadOnlyDictionary<string, string>? cpins = null;
+    if (cv.TryGetValue("pq_pins", out var po2) && po2 is Dictionary<string, object?> pd)
+        cpins = pd.ToDictionary(kv => kv.Key, kv => (kv.Value as string) ?? "");
+    var ctrusted = cv.TryGetValue("trusted_root", out var to2) ? to2 as Dictionary<string, object?> : null;
+    List<string>? callowed = cv.TryGetValue("allowed_suites", out var ao2) && ao2 is List<object?> al2 ? al2.Select(z => (string)z!).ToList() : null;
+    var cri = cv.TryGetValue("expected_root_issuer", out var ri2) ? ri2 : null;
+    var (cwhy, cok) = Pca.VerifyChain(cchain, cri, cri != null, callowed, cpins, ctrusted);
+    bool pass = cok == wantOk && (!pinReason || cwhy == wantReason);
+    if (pass) Console.WriteLine("ok   chain_pin " + cname);
+    else Bad($"chain_pin {cname}: ok={cok} want={wantOk} reason='{cwhy}' wantReason='{wantReason}'");
+}
+total++; // assertion: the shared chain_pin corpus is not silently shrunk
+if (pinRan + pinSkipped < 25) Bad($"chain_pin: expected >=25 vectors, saw {pinRan + pinSkipped}");
+
+// ================= round 6: whole signer-set validation, signer-set hash, malformed input =================
+int tsRan = 0, tsSkipped = 0;
+foreach (var x in (List<object?>)prim["threshold_set"]!)
+{
+    var s = (Dictionary<string, object?>)x!;
+    if (s.TryGetValue("requires", out var rq) && rq is string req && !supportedSuites.Contains(req)) { tsSkipped++; continue; }
+    total++; tsRan++;
+    bool want = (bool)s["valid"]!;
+    bool got;
+    try { got = Pca.VerifyThresholdShare(s); } catch (Exception ex) { Bad($"threshold_set {s["name"]}: THREW {ex.GetType().Name}"); continue; }
+    if (got != want) Bad($"threshold_set {s["name"]}: verified={got} want valid={want}");
+}
+foreach (var x in (List<object?>)prim["signer_set_hash"]!)
+{
+    var s = (Dictionary<string, object?>)x!; total++;
+    var h = Pca.SignerSetHashB64u((List<object?>)s["signer_set"]!);
+    if (h != (string)s["hash"]!) Bad($"signer_set_hash {s["name"]}: got {h}");
+}
+int malformedRan = 0;
+foreach (var x in (List<object?>)prim["malformed"]!)
+{
+    var m = (Dictionary<string, object?>)x!; total++; malformedRan++;
+    var mname = (string)m["name"]!;
+    try
+    {
+        bool accepted = (string)m["api"]! switch
+        {
+            "chain" => Pca.VerifyChain((List<object?>)((Dictionary<string, object?>)m["input"]!)["chain"]!, ((Dictionary<string, object?>)m["input"]!)["expected_root_issuer"], true).Ok,
+            "threshold_share" => Pca.VerifyThresholdShare(m["input"]),
+            "pcactn_json" => Pca.VerifyRaw((string)((Dictionary<string, object?>)m["input"]!)["text"]!, (Dictionary<string, object?>)((Dictionary<string, object?>)m["input"]!)["grant"]!,
+                long.Parse(((Num)((Dictionary<string, object?>)m["input"]!)["now"]!).Raw, System.Globalization.CultureInfo.InvariantCulture), (string)((Dictionary<string, object?>)m["input"]!)["aud"]!).Allow,
+            _ => true,
+        };
+        if (accepted) Bad($"malformed {mname}: accepted");
+    }
+    catch (Exception ex) { Bad($"malformed {mname}: THREW {ex.GetType().Name}"); }
+}
+total++;
+if (tsRan + tsSkipped < 55 || malformedRan < 80) Bad($"round-6 primitives shrank: threshold_set {tsRan + tsSkipped}, malformed {malformedRan}");
+Console.WriteLine($"round 6: threshold_set ran {tsRan}, skipped {tsSkipped}; malformed {malformedRan} clean denies");
+
 // ================= report =================
 Console.WriteLine();
 Console.WriteLine($"PCActn vectors: ran {vs.Count - vectorSkipped}/{vs.Count}, skipped {vectorSkipped}");
@@ -183,6 +256,7 @@ foreach (var (suite, n) in skippedBySuite)
 Console.WriteLine($"threshold shares: {shareAccepted} valid accepted, {shareRejected} invalid rejected " +
     "(incl. v2.1 bare-agent-share + cross-signer-set replay)");
 Console.WriteLine($"  v2.1 bare-agent-share rejected: {bareRejected}; cross-signer-set replay rejected: {wrongSetRejected}");
+Console.WriteLine($"chain_pin vectors: ran {pinRan}, skipped {pinSkipped}");
 Console.WriteLine($"pq artifacts: ran {artRan}, skipped {artSkipped}");
 foreach (var (suite, n) in artSkippedBySuite)
     Console.WriteLine($"  skipped {n} pq artifact(s) under unimplemented suite \"{suite}\"");

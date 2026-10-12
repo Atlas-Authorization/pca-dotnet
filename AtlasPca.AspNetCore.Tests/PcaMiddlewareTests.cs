@@ -174,4 +174,105 @@ public class PcaMiddlewareTests
         Assert.Contains("error=\"access_denied\"", www);
         Assert.Contains("audience", ReadBody(ctx)); // the denying reason names the failed audience check
     }
+
+    // R6-01 PoC: body mode parsed the {"pcactn":...} envelope leniently, so a duplicate key collapsed last-wins
+    // BEFORE verification ("dup-aud-first-evil": a leading "aud":"evil" was dropped and the request allowed), while
+    // the rewound body still carried the first value for a first-wins downstream parser. Body mode must use the
+    // same strict profile as header mode: duplicate keys at any depth are refused.
+    static async Task<(bool NextRan, int Status)> RunBody(Fixture f, string envelope)
+    {
+        bool nextRan = false;
+        var mw = new PcaMiddleware(_ => { nextRan = true; return Task.CompletedTask; }, OptionsFor(f));
+        var ctx = NewContext();
+        ctx.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(envelope));
+        ctx.Request.ContentType = "application/json";
+        await mw.InvokeAsync(ctx);
+        return (nextRan, ctx.Response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Body_DuplicateAudFirstEvil_IsDenied()
+    {
+        var f = LoadValid();
+        Assert.StartsWith("{", f.Json);
+        var evil = "{\"aud\":\"evil\"," + f.Json.Substring(1);
+        var (nextRan, status) = await RunBody(f, "{\"pcactn\":" + evil + "}");
+        Assert.False(nextRan, "a PCActn with a duplicate 'aud' must not be verified (last-wins) and allowed");
+        Assert.Equal(StatusCodes.Status401Unauthorized, status);
+    }
+
+    [Fact]
+    public async Task Body_DuplicateCounterFirst_IsDenied()
+    {
+        var f = LoadValid();
+        var evil = "{\"counter\":999," + f.Json.Substring(1);
+        var (nextRan, _) = await RunBody(f, "{\"pcactn\":" + evil + "}");
+        Assert.False(nextRan);
+    }
+
+    [Fact]
+    public async Task Body_DuplicateEnvelopeKey_IsDenied()
+    {
+        var f = LoadValid();
+        var (nextRan, status) = await RunBody(f, "{\"pcactn\":{},\"pcactn\":" + f.Json + "}");
+        Assert.False(nextRan, "a duplicate 'pcactn' envelope key must be refused, not resolved last-wins");
+        Assert.Equal(StatusCodes.Status401Unauthorized, status);
+    }
+
+    [Fact]
+    public async Task Body_DuplicateNestedKey_IsDenied()
+    {
+        var f = LoadValid();
+        // duplicate inside a nested object of the PCActn (action.verb)
+        var m = System.Text.RegularExpressions.Regex.Match(f.Json, "\"action\"\\s*:\\s*\\{");
+        Assert.True(m.Success);
+        var at = m.Index + m.Length;
+        var evil = f.Json.Substring(0, at) + "\"verb\":\"delete\"," + f.Json.Substring(at);
+        var (nextRan, _) = await RunBody(f, "{\"pcactn\":" + evil + "}");
+        Assert.False(nextRan);
+    }
+}
+
+public class PcaMiddlewareDeepNestingTests
+{
+    // PoC: an attacker POSTs a deeply nested body. The envelope parse must reject it BEFORE recursing; run on a tiny stack so a
+    // regression (unbounded or 4096-deep recursion) kills the test host instead of passing by luck on an 8 MB stack.
+    [Fact]
+    public void DeeplyNestedBody_IsRejectedWithoutStackOverflow()
+    {
+        int status = 0;
+        var t = new System.Threading.Thread(() =>
+        {
+            var ctx = new DefaultHttpContext();
+            ctx.Response.Body = new MemoryStream();
+            var body = "{\"pcactn\":" + new string('[', 3000) + new string(']', 3000) + "}";
+            ctx.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes(body));
+            ctx.Request.ContentType = "application/json";
+            var mw = new PcaMiddleware(_ => Task.CompletedTask, new PcaOptions { Audience = "a", Clock = () => 0, GrantResolver = _ => Task.FromResult<Dictionary<string, object?>?>(null) });
+            mw.InvokeAsync(ctx).GetAwaiter().GetResult();
+            status = ctx.Response.StatusCode;
+        }, 256 * 1024);
+        t.Start();
+        t.Join();
+        Assert.Equal(StatusCodes.Status401Unauthorized, status);
+    }
+
+    // Parity with the TS reference (require-pca.ts defaultExtract: strictParse of the WHOLE body, MAX_JSON_DEPTH = 32) and the
+    // Go / Python middleware: the envelope's own object counts, so an envelope of total depth 33 is refused at parse time and
+    // one of total depth 32 gets past the parse (and is then refused only because [[...]] is not a PCActn object).
+    [Theory]
+    [InlineData(32, "PCActn must be a JSON object.")]
+    [InlineData(33, "The request body is not valid JSON: strict JSON: nesting too deep")]
+    public async Task BodyEnvelope_DepthCapCountsTheEnvelope(int totalDepth, string expected)
+    {
+        var ctx = new DefaultHttpContext();
+        ctx.Response.Body = new MemoryStream();
+        var inner = totalDepth - 1;
+        ctx.Request.Body = new MemoryStream(Encoding.UTF8.GetBytes("{\"pcactn\":" + new string('[', inner) + new string(']', inner) + "}"));
+        ctx.Request.ContentType = "application/json";
+        var mw = new PcaMiddleware(_ => Task.CompletedTask, new PcaOptions { Audience = "a", Clock = () => 0, GrantResolver = _ => Task.FromResult<Dictionary<string, object?>?>(null) });
+        await mw.InvokeAsync(ctx);
+        Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
+        Assert.Contains("error_description=\"" + expected, ctx.Response.Headers["WWW-Authenticate"].ToString());
+    }
 }

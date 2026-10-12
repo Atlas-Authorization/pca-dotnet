@@ -83,6 +83,8 @@ public sealed class PcaMiddleware
             byte[]? bytes = Pca.B64uDecode(header[0]);
             if (bytes is null)
                 return (null, ("invalid_request", $"The {_options.HeaderName} header is not canonical base64url."));
+            if (bytes.Length > Pca.MaxArtifactBytes)
+                return (null, ("invalid_request", $"The {_options.HeaderName} header is not a decodable PCActn: " + Pca.ArtifactSizeReason));
             try
             {
                 return (Pca.ParseStrict(Encoding.UTF8.GetString(bytes)), null);
@@ -108,7 +110,10 @@ public sealed class PcaMiddleware
         object? envelope;
         try
         {
-            envelope = Pca.ParseJson(body); // transport envelope: lenient parse; the PCActn itself is strictly re-checked by the verifier.
+            // R6-01: the SAME strict profile as header mode (duplicate keys refused at any depth, depth-bounded BEFORE recursion so a
+            // hostile body cannot overflow the stack). A lenient parse collapsed duplicate keys last-wins before verification, while
+            // the rewound body still carried the first value for a first-wins downstream parser.
+            envelope = Pca.ParseStrictEnvelope(body);
         }
         catch (Exception ex)
         {

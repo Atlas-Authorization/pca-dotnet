@@ -66,11 +66,41 @@ public static class Pca
     // v2.1 agent-leaf threshold-share binding (README sections 9 + "v2.1 AGENT-LEAF BINDING").
     const string ShareDomainPrefix = "atlas-pca/share/";
     const string SignersetDomain = "atlas-pca/signerset/v1\0";
+    const string ShareSuiteTag = "\0atlas-pca/share-suite/v1\0";
     const string DefaultRev = "reversible";
     public const int MaxJsonDepth = 32;
     public const int MaxJsonChars = 1 << 20; // UTF-8 bytes;
     public const int MaxDecimalDigits = 15;
     public const int MaxChainHops = 16;
+    /// <summary>Shared hard caveat caps (all PCA verifiers): per-hop cumulative list, and the sum over every hop of a chain.</summary>
+    public const int MaxCaveatsPerHop = 256;
+    public const int MaxCaveatsPerChain = 1024;
+    public const string CaveatLimitReason = "chain exceeds caveat limit (max 256 per hop, 1024 per chain)";
+    /// <summary>Shared raw wire-size cap of a PCActn JSON document (UTF-8 bytes), checked before any parsing.</summary>
+    public const int MaxArtifactBytes = 524288;
+    public const string ArtifactSizeReason = "artifact exceeds size limit (max 524288 bytes)";
+
+    /// <summary>True when the raw PCActn document exceeds <see cref="MaxArtifactBytes"/> UTF-8 bytes (O(1) for clearly small/large strings).</summary>
+    public static bool ArtifactTooLarge(string text)
+    {
+        if (text.Length > MaxArtifactBytes) return true;
+        if ((long)text.Length * 3 <= MaxArtifactBytes) return false;
+        return Encoding.UTF8.GetByteCount(text) > MaxArtifactBytes;
+    }
+
+    /// <summary>True when the chain breaks the caveat caps; reads raw list sizes only, so it runs before any hashing/signature work.</summary>
+    public static bool CaveatLimitExceeded(List<object?> chain)
+    {
+        long total = 0;
+        foreach (var c in chain)
+        {
+            int n = c is Dictionary<string, object?> m && m.TryGetValue("caveats", out var cv) && cv is List<object?> l ? l.Count : 0;
+            if (n > MaxCaveatsPerHop) return true;
+            total += n;
+            if (total > MaxCaveatsPerChain) return true;
+        }
+        return false;
+    }
     public const long MaxLifetimeMs = 3_600_000;
     public const long MaxSkewMs = 60_000;
     public const long MaxSafeInt = 9007199254740991L;
@@ -79,15 +109,31 @@ public static class Pca
     // tree: null, bool, string, Num, List<object?>, Dictionary<string,object?>
 
     /// <summary>STRICT profile for signed bytes (README section 2/3). Throws StrictJsonException.</summary>
-    public static object? ParseStrict(string text) => new Parser(text, true).Run();
+    public static object? ParseStrict(string text) => new Parser(text, true, MaxJsonDepth).Run();
 
     /// <summary>Plain RFC 8259 parse (used only for trusted fixtures such as vectors.json): no profile checks.</summary>
-    public static object? ParseJson(string text) => new Parser(text, false).Run();
+    public static object? ParseJson(string text) => new Parser(text, false, LenientMaxDepth).Run();
+
+    /// <summary>Recursion cap of the lenient parser (same bound as the PHP loader). Enforced BEFORE recursing, so a hostile document can
+    /// never exhaust the thread stack (a .NET stack overflow is unrecoverable and kills the process).</summary>
+    public const int LenientMaxDepth = 512;
+
+    /// <summary>Lenient parse with an explicit (small) depth cap: for untrusted transport envelopes such as {"pcactn": ...}, whose PCActn
+    /// is re-validated strictly afterwards. Throws StrictJsonException("nesting too deep") beyond <paramref name="maxDepth"/>.</summary>
+    public static object? ParseBounded(string text, int maxDepth) => new Parser(text, false, maxDepth).Run();
+
+    /// <summary>R6-01: STRICT profile for an untrusted transport envelope that WRAPS a PCActn one level deep, e.g. the
+    /// middleware body <c>{"pcactn": ...}</c>. Identical to <see cref="ParseStrict"/> (duplicate keys refused at ANY depth,
+    /// strict numbers, no lone surrogates, 1 MiB cap, depth cap <see cref="MaxJsonDepth"/> counted from the ENVELOPE, exactly like
+    /// the reference's strictParse of the whole body in require-pca.ts defaultExtract and the Go / Python middleware). A lenient
+    /// envelope parse would collapse duplicate keys last-wins before verification while a first-wins downstream parser of the
+    /// (rewound) body saw the other value.</summary>
+    public static object? ParseStrictEnvelope(string text) => new Parser(text, true, MaxJsonDepth).Run();
 
     sealed class Parser
     {
-        readonly string t; readonly bool strict; int i;
-        public Parser(string text, bool strict) { t = text; this.strict = strict; }
+        readonly string t; readonly bool strict; readonly int maxDepth; int i;
+        public Parser(string text, bool strict, int maxDepth) { t = text; this.strict = strict; this.maxDepth = maxDepth; }
         Exception Err(string m) => new StrictJsonException($"{m} (at offset {i})");
 
         public object? Run()
@@ -115,8 +161,7 @@ public static class Pca
             char ch = t[i];
             if (ch == '{')
             {
-                if (strict && depth > MaxJsonDepth) throw Err("nesting too deep");
-                if (depth > 4096) throw Err("nesting too deep");
+                if (depth > maxDepth) throw Err("nesting too deep");
                 i++;
                 var o = new Dictionary<string, object?>();
                 Ws();
@@ -139,8 +184,7 @@ public static class Pca
             }
             if (ch == '[')
             {
-                if (strict && depth > MaxJsonDepth) throw Err("nesting too deep");
-                if (depth > 4096) throw Err("nesting too deep");
+                if (depth > maxDepth) throw Err("nesting too deep");
                 i++;
                 var a = new List<object?>();
                 Ws();
@@ -354,7 +398,7 @@ public static class Pca
                 }
             case int i: sb.Append(i.ToString(CultureInfo.InvariantCulture)); break;
             case long l:
-                if (Math.Abs(l) > MaxSafeInt) throw new InvalidOperationException("canonicalize: unsafe integer");
+                if (l < -MaxSafeInt || l > MaxSafeInt) throw new InvalidOperationException("canonicalize: unsafe integer");
                 sb.Append(l.ToString(CultureInfo.InvariantCulture)); break;
             case List<object?> a:
                 if (depth > MaxJsonDepth) throw new InvalidOperationException("canonicalize: nesting too deep");
@@ -612,8 +656,44 @@ public static class Pca
         return Pq.MlDsa65Verify(pk, msg, sg);
     }
 
-    /// <summary>Verify the leaf signature under the PCActn's suite. FAIL-CLOSED.</summary>
-    static bool VerifyLeafSuite(Dictionary<string, object?> p, object? holder, byte[] msg)
+    /// <summary>An opaque PQ verification key (R3-01 choke point). Instances are minted ONLY inside this class
+    /// (private constructor): <see cref="Resolve"/> (the single key-resolution function, mirroring
+    /// <c>resolvePqVerifyKey</c> in packages/pca/src/pq.ts) and <see cref="CallerVouched"/>. The low-level suite verify
+    /// (<see cref="VerifySuite"/>) accepts ONLY this type, so PQ verification cannot be reached with a <c>pq_pk</c>
+    /// read straight off the artifact being verified.</summary>
+    sealed class PinnedPq
+    {
+        public string Key { get; }
+        PinnedPq(string key) { Key = key; }
+
+        /// <summary>THE choke point. Returns the key to verify under, or null (REFUSE) when no verifier-side authority
+        /// vouches for the artifact's <c>pq_pk</c>: (1) <paramref name="trustedPk"/>, a key the verifier itself holds (the
+        /// stored grant); (2) <paramref name="pqPins"/>[<paramref name="identity"/>] (own entry only): the artifact's
+        /// pq_pk MUST equal the pin, a differing pin is a refusal; (3) <paramref name="holderPq"/>: pq_pk must hash to
+        /// the signer's committed holder_pq (F-2). Natives have no allowUnboundPq.</summary>
+        public static PinnedPq? Resolve(string? identity, object? artifactPk, object? holderPq = null,
+            IReadOnlyDictionary<string, string>? pqPins = null, string? trustedPk = null)
+        {
+            if (!string.IsNullOrEmpty(trustedPk)) return new PinnedPq(trustedPk);
+            if (artifactPk is not string pk || pk.Length == 0) return null;
+            if (pqPins != null && identity != null && pqPins.TryGetValue(identity, out var pin))
+                return pin == pk ? new PinnedPq(pk) : null;
+            if (holderPq is string cm && HolderPqCommitment(pk) == cm) return new PinnedPq(pk);
+            return null;
+        }
+
+        /// <summary>EXPLICITLY caller-vouched: the key is authorised by the caller out of band (threshold shares,
+        /// the pq_artifact conformance primitives). Proves nothing about who issued the artifact; chain hops and the
+        /// PCActn leaf never use it.</summary>
+        public static PinnedPq? CallerVouched(object? pk) => pk is string s && s.Length > 0 ? new PinnedPq(s) : null;
+    }
+
+    static bool MlDsaVerifyPinned(PinnedPq? pq, byte[] msg, object? sigB64u) =>
+        pq != null && MlDsaVerifyB64u(pq.Key, msg, sigB64u);
+
+    /// <summary>Verify <paramref name="p"/>'s signature(s) under its suite. The PQ half verifies ONLY under
+    /// <paramref name="pq"/>, never under <c>p["pq_pk"]</c>. FAIL-CLOSED.</summary>
+    static bool VerifySuite(Dictionary<string, object?> p, object? holder, byte[] msg, PinnedPq? pq)
     {
         var (name, _) = ResolveSuite(p);
         if (name == null) return false;
@@ -621,9 +701,9 @@ public static class Pca
         return name switch
         {
             "ed25519" => VerifyB64u(holder, msg, sig),
-            "ml-dsa-65" => MlDsaVerifyB64u(Get(p, "pq_pk"), msg, sig),
+            "ml-dsa-65" => MlDsaVerifyPinned(pq, msg, sig),
             "hybrid-ed25519-ml-dsa-65" =>
-                VerifyB64u(holder, msg, sig) && MlDsaVerifyB64u(Get(p, "pq_pk"), msg, Get(p, "pq_sig")),
+                VerifyB64u(holder, msg, sig) && MlDsaVerifyPinned(pq, msg, Get(p, "pq_sig")),
             _ => false,
         };
     }
@@ -631,15 +711,16 @@ public static class Pca
     /// <summary>Suite-aware signature verification over an arbitrary <paramref name="msg"/>, exposed for the
     /// threshold-share and PQ-artifact conformance surfaces (same agility seam as the leaf). An absent
     /// <paramref name="alg"/> defaults to ed25519. FAIL-CLOSED: any unimplemented suite (and any malformed
-    /// key / signature) returns false, never throws.</summary>
+    /// key / signature) returns false, never throws. CALLER-VOUCHED: <paramref name="pqPk"/> is trusted as given, so this
+    /// proves nothing about who issued the artifact; use it only where the key is authorised elsewhere.</summary>
     public static bool VerifySuiteSig(string? alg, object? edPk, object? pqPk, byte[] msg, object? sig, object? pqSig)
     {
         var name = alg ?? "ed25519";
         return name switch
         {
             "ed25519" => VerifyB64u(edPk, msg, sig),
-            "ml-dsa-65" => MlDsaVerifyB64u(pqPk, msg, sig),
-            "hybrid-ed25519-ml-dsa-65" => VerifyB64u(edPk, msg, sig) && MlDsaVerifyB64u(pqPk, msg, pqSig),
+            "ml-dsa-65" => MlDsaVerifyPinned(PinnedPq.CallerVouched(pqPk), msg, sig),
+            "hybrid-ed25519-ml-dsa-65" => VerifyB64u(edPk, msg, sig) && MlDsaVerifyPinned(PinnedPq.CallerVouched(pqPk), msg, pqSig),
             _ => false, // unimplemented / unknown suite: fail-closed
         };
     }
@@ -649,23 +730,69 @@ public static class Pca
     /// <summary>Recompute the signer-set hash committed by a threshold share (v2.1):
     /// <c>sha256("atlas-pca/signerset/v1\0" || canonical(sort_by(role, publicKey)[{publicKey, role}]))</c>.
     /// FAIL-CLOSED: null on any malformed entry (never trusts a precomputed <c>signer_set_hash</c>).</summary>
+    static int Utf8Compare(string a, string b) =>
+        ((ReadOnlySpan<byte>)Encoding.UTF8.GetBytes(a)).SequenceCompareTo(Encoding.UTF8.GetBytes(b));
+
+    /// <summary>Registered PQ public-key lengths of every suite (ml-dsa-65/87, slh-dsa-128f/256s, fn-dsa-512/1024, less-cat1),
+    /// whether or not this SDK implements the suite: a signer set is validated exactly like the reference.</summary>
+    static readonly HashSet<int> PqPkLengths = new() { 1952, 2592, 32, 64, 897, 1793, 97484 };
+    static readonly HashSet<string> SignerRoles = new() { "agent", "guardian", "principal" };
+
+    /// <summary>R6-03: validate the WHOLE signer set like the reference (decideThreshold BuildReg): every entry an object with
+    /// a known role and a canonical 32-byte publicKey; a present pq_pk (JSON null is present) canonical base64url of a
+    /// registered PQ key length; one key per role; one role per key; a duplicate (role, key) only with the same pq_pk.
+    /// Returns role -> (publicKey, pq_pk or null), or null when the set is malformed.</summary>
+    static Dictionary<string, (string Pk, string? Pq)>? ValidateSignerSet(List<object?> signerSet)
+    {
+        var reg = new Dictionary<string, (string Pk, string? Pq)>();
+        foreach (var e in signerSet)
+        {
+            if (e is not Dictionary<string, object?> o) return null;
+            if (Get(o, "role") is not string role || !SignerRoles.Contains(role)) return null;
+            if (Get(o, "publicKey") is not string pk || B64uDecode(pk, 32) == null) return null;
+            string? pq = null;
+            if (Has(o, "pq_pk"))
+            {
+                if (Get(o, "pq_pk") is not string ps) return null;
+                var pb = B64uDecode(ps);
+                if (pb == null || !PqPkLengths.Contains(pb.Length)) return null;
+                pq = ps;
+            }
+            if (reg.TryGetValue(role, out var prev))
+            {
+                if (prev.Pk != pk) return null;   // two keys for one role
+                if (prev.Pq != pq) return null;   // duplicate (role, key) with a conflicting pq_pk
+                continue;
+            }
+            foreach (var kv in reg) if (kv.Value.Pk == pk) return null; // one key under two roles
+            reg[role] = (pk, pq);
+        }
+        return reg;
+    }
+
     static byte[]? SignerSetHash(List<object?> signerSet)
     {
-        var entries = new List<(string Role, string Pk)>(signerSet.Count);
+        var entries = new List<(string Role, string Pk, string? Pq)>(signerSet.Count);
         foreach (var e in signerSet)
         {
             if (e is not Dictionary<string, object?> o) return null;
             if (Get(o, "role") is not string role || Get(o, "publicKey") is not string pk) return null;
-            entries.Add((role, pk));
+            entries.Add((role, pk, Get(o, "pq_pk") as string));
         }
-        // bytewise ordering (ASCII roles/base64url keys): role, then publicKey — matches the reference impls.
+        // R6-04: UTF-8 BYTE ordering (role, then publicKey) like the reference's compareUtf8. string.CompareOrdinal
+        // compares UTF-16 code units, which orders a non-BMP character (surrogate pair) before U+E000..U+FFFF.
         entries.Sort((a, b) =>
         {
-            int c = string.CompareOrdinal(a.Role, b.Role);
-            return c != 0 ? c : string.CompareOrdinal(a.Pk, b.Pk);
+            int c = Utf8Compare(a.Role, b.Role);
+            return c != 0 ? c : Utf8Compare(a.Pk, b.Pk);
         });
         var arr = entries
-            .Select(e => (object?)new Dictionary<string, object?> { ["publicKey"] = e.Pk, ["role"] = e.Role })
+            .Select(e =>
+            {
+                var row = new Dictionary<string, object?> { ["publicKey"] = e.Pk, ["role"] = e.Role };
+                if (e.Pq != null) row["pq_pk"] = e.Pq; // additive: a registered PQ key is part of the bound set
+                return (object?)row;
+            })
             .ToList();
         try { return Sha(Cat(Encoding.UTF8.GetBytes(SignersetDomain), Canon(arr))); }
         catch { return null; }
@@ -679,25 +806,55 @@ public static class Pca
     /// suite seam as the leaf, so a PQ/hybrid share would use <c>share.pq_pk</c>/<c>share.pq_sig</c>).
     /// FAIL-CLOSED: false on any malformed input, never throws. Consequently the PRE-v2.1 bare agent share
     /// (a <c>sig</c> over the bare threshold message) and a cross-signer-set replay both fail.</summary>
+    /// <summary>The signer-set hash as base64url (null on a set with a non-object entry or a non-string role / publicKey).</summary>
+    public static string? SignerSetHashB64u(List<object?> signerSet) { if (signerSet == null) return null; var h = SignerSetHash(signerSet); return h == null ? null : B64u(h); }
+
+    /// <summary>Total entry point for an entry of ANY JSON shape (R6-05): a non-object is false.</summary>
+    public static bool VerifyThresholdShare(object? entry) => entry is Dictionary<string, object?> d && VerifyThresholdShare(d);
+
     public static bool VerifyThresholdShare(Dictionary<string, object?> entry)
     {
         try
         {
             if (Get(entry, "role") is not string role) return false;
-            if (!TryInt(Get(entry, "t"), out var t) || t < 0 || t > 255) return false;
+            // R6-04: t is exactly 1, 2 or 3 (the reference refuses every other value; a wider range would sign t mod 256).
+            if (!TryInt(Get(entry, "t"), out var t) || t < 1 || t > 3) return false;
             if (Get(entry, "signer_set") is not List<object?> signerSet) return false;
             var tm = B64uDecode(Get(entry, "threshold_message")); // strict base64url, no fixed length
             if (tm == null) return false;
+            // R6-03: the WHOLE set is validated before the share is looked at.
+            var reg = ValidateSignerSet(signerSet);
+            if (reg == null) return false;
             var ssh = SignerSetHash(signerSet);
             if (ssh == null) return false;
             if (Get(entry, "share") is not Dictionary<string, object?> share) return false;
-            if (Get(share, "publicKey") is not string) return false;
-            // Bound share message: domain(role) || sha256(thresholdMessage) || signerSetHash || t.
+            if (Get(share, "publicKey") is not string pk) return false;
+            if (Get(share, "role") is not string srole || srole != role) return false;
+            // R5-A1: the share must be for the ONE key the verifier's signer set registers for `role`; the
+            // share's own publicKey / pq_pk never vouch for themselves.
+            if (!reg.TryGetValue(role, out var r) || r.Pk != pk) return false;
+            var alg = Get(share, "alg") as string;
+            if (Has(share, "alg") && alg == null) return false;
+            // A share that NAMES a pq_pk must name exactly its role's registered one (any suite; a role registering
+            // none has nothing it could equal). The key used is always the registered one.
+            if (Has(share, "pq_pk") && (r.Pq == null || Get(share, "pq_pk") is not string sp || sp != r.Pq)) return false;
+            // R6-02: a role that registers a pq_pk REQUIRES a PQ (pure or hybrid) share; an ed25519-only share
+            // for it is refused (otherwise an Ed25519 break would still forge the role).
+            if (r.Pq != null && (alg ?? "ed25519") == "ed25519") return false;
+            object? pqPk = Get(share, "pq_pk");
+            var tag = Array.Empty<byte>();
+            if ((alg ?? "ed25519") != "ed25519")
+            {
+                // PQ key = the signer set's registered pq_pk, never the share's own.
+                if (r.Pq == null) return false;
+                pqPk = r.Pq;
+                if (alg != null && Pq.Suites.ContainsKey(alg)) tag = Encoding.UTF8.GetBytes(ShareSuiteTag + alg);
+            }
+            // Bound share message: domain(role) || sha256(thresholdMessage) || signerSetHash || t [|| suite tag].
             var msg = Cat(
                 Encoding.UTF8.GetBytes(ShareDomainPrefix), Encoding.UTF8.GetBytes(role), new byte[] { 0 },
-                Sha(tm), ssh, new byte[] { (byte)t });
-            return VerifySuiteSig(Get(share, "alg") as string, Get(share, "publicKey"),
-                Get(share, "pq_pk"), msg, Get(share, "sig"), Get(share, "pq_sig"));
+                Sha(tm), ssh, new byte[] { (byte)t }, tag);
+            return VerifySuiteSig(alg, pk, pqPk, msg, Get(share, "sig"), Get(share, "pq_sig"));
         }
         catch { return false; }
     }
@@ -719,6 +876,7 @@ public static class Pca
         {
             ["issuer"] = Get(c, "issuer"), ["holder"] = Get(c, "holder"), ["caveats"] = Get(c, "caveats"), ["parent"] = Get(c, "parent"),
         };
+        if (Get(c, "holder_pq") is string hpq) body["holder_pq"] = hpq; // TS bodyOf: included iff defined
         if (name != "ed25519")
         {
             body["alg"] = name;
@@ -727,7 +885,7 @@ public static class Pca
         return body;
     }
 
-    static string CheckSig(Dictionary<string, object?> c, object? signer, string label)
+    static string CheckSig(Dictionary<string, object?> c, object? signer, string label, PinnedPq? pq = null)
     {
         // Unknown suite => fail-closed (before any hashing), mirroring capability.ts checkSig.
         var body = SignableHopBody(c);
@@ -738,10 +896,10 @@ public static class Pca
         if (digest != bd || id != bd) return label + ": body digest mismatch";
         var d = B64uDecode(bd, 32);
         if (d == null) return label + ": bad signature (not signed by expected key)";
-        // Suite-agile hop verification (mirrors VerifyLeafSuite): ed25519 == VerifyB64u(signer, msg, sig);
-        // hybrid requires BOTH the Ed25519 `sig` (under `signer`) AND the ML-DSA `pq_sig` (under `pq_pk`);
-        // pure ml-dsa-65 verifies `sig` under `pq_pk`. The signer is the expected Ed25519 key.
-        if (!VerifyLeafSuite(c, signer, Cat(Encoding.UTF8.GetBytes(CapDomain), d)))
+        // Suite-agile hop verification (mirrors VerifySuite): ed25519 == VerifyB64u(signer, msg, sig);
+        // hybrid requires BOTH the Ed25519 `sig` (under `signer`) AND the ML-DSA `pq_sig` (under the resolved `pq` key);
+        // pure ml-dsa-65 verifies `sig` under it (never the hop's own pq_pk). The signer is the expected Ed25519 key.
+        if (!VerifySuite(c, signer, Cat(Encoding.UTF8.GetBytes(CapDomain), d), pq))
             return label + ": bad signature (not signed by expected key)";
         return "";
     }
@@ -753,18 +911,82 @@ public static class Pca
         && Get(c, "id") is string && Get(c, "issuer") is string && Get(c, "holder") is string
         && Get(c, "body_digest") is string && Get(c, "sig") is string
         && (!Has(c, "parent") || Get(c, "parent") is string)
+        && (!Has(c, "holder_pq") || Get(c, "holder_pq") is string)
+        && (!Has(c, "alg") || Get(c, "alg") is string)
+        && (!Has(c, "pq_pk") || Get(c, "pq_pk") is string)
+        && (!Has(c, "pq_sig") || Get(c, "pq_sig") is string)
         && Get(c, "caveats") is List<object?> cv
         && cv.All(x => x is Dictionary<string, object?> d && Get(d, "type") is string);
 
-    public static (string Why, bool Ok) VerifyChain(List<object?> chain, object? expectedRootIssuer, bool haveIssuer)
+    /// <summary>F-2 commitment to a holder's PQ key: b64u(sha256("atlas-pca/holder-pq/v1\0" || utf8(pq_pk))).</summary>
+    public static string HolderPqCommitment(string pqPk) => B64u(Sha(Cat(Encoding.UTF8.GetBytes("atlas-pca/holder-pq/v1\0"), Encoding.UTF8.GetBytes(pqPk))));
+
+    /// <summary>`allowedSuites` policy for one hop / leaf (absent `alg` == ed25519). Null policy == no restriction.</summary>
+    static string? SuitePolicyError(object? alg, string label, IReadOnlyCollection<string>? allowed)
     {
+        if (allowed == null) return null;
+        var a = alg ?? "ed25519";
+        return a is string s && allowed.Contains(s) ? null : $"{label}: signature suite '{a}' is not allowed by this verifier's suite policy";
+    }
+
+    /// <summary>F-2/F-4: a suite that carries a PQ key is accepted only if pq_pk hashes to the signer's committed holder_pq.</summary>
+    static string? PqBindingError(Dictionary<string, object?> signed, object? committed, string label)
+    {
+        var (name, _) = ResolveSuite(signed);
+        if (name == null || !Pq.Suites[name].NeedsPqPk) return null;
+        if (committed is not string cm)
+            return $"{label}: suite '{name}' needs a PQ key bound to the signer, but the signer's holder carries no holder_pq commitment (unbound PQ keys are rejected; F-2)";
+        if (Get(signed, "pq_pk") is not string pk || HolderPqCommitment(pk) != cm)
+            return $"{label}: pq_pk does not match the signer's committed holder_pq (F-2)";
+        return null;
+    }
+
+    /// <summary>The root hop has no parent holding a holder_pq commitment, so a non-ed25519 root's PQ key must come from a
+    /// verifier-side authority: the verifier's stored copy of this very grant (trustedRoot, same content hash) or a pin
+    /// for root.issuer. Mirrors <c>rootPq</c> in capability.ts. Returns (key, null) / (null, null) for ed25519 / (null, reason).</summary>
+    static (PinnedPq? Key, string? Err) ResolveRootPq(Dictionary<string, object?> root, IReadOnlyDictionary<string, string>? pqPins, Dictionary<string, object?>? trustedRoot)
+    {
+        var (name, _) = ResolveSuite(root);
+        if (name == null || !Pq.Suites[name].NeedsPqPk) return (null, null);
+        var pk = Get(root, "pq_pk");
+        string? trusted = null;
+        if (trustedRoot != null && pk is string tpk)
+        {
+            try { if (CapHash(trustedRoot) == CapHash(root)) trusted = tpk; } catch { trusted = null; }
+        }
+        var key = PinnedPq.Resolve(Get(root, "issuer") as string, pk, pqPins: pqPins, trustedPk: trusted);
+        if (key == null)
+            return (null, $"hop 0: root suite '{name}' needs a PQ key pinned for the root issuer (policy.pqPins) or the verifier's stored grant (policy.trustedRoot); the root's own pq_pk proves nothing about who issued it (R3-01)");
+        return (key, null);
+    }
+
+    /// <summary>Verify a capability chain. A non-ed25519 (pure-PQ or hybrid) ROOT is accepted only if
+    /// <paramref name="pqPins"/>[root.issuer] equals the root's pq_pk, or <paramref name="trustedRoot"/> is the root
+    /// itself (the verifier's own stored grant); otherwise it is refused (R4-01). Ed25519 roots need neither.</summary>
+    public static (string Why, bool Ok) VerifyChain(List<object?> chain, object? expectedRootIssuer, bool haveIssuer, IReadOnlyCollection<string>? allowedSuites = null,
+        IReadOnlyDictionary<string, string>? pqPins = null, Dictionary<string, object?>? trustedRoot = null)
+    {
+        // TOTAL (R6-05): a hostile chain is a verdict, never an exception.
+        try { return VerifyChainUnchecked(chain, expectedRootIssuer, haveIssuer, allowedSuites, pqPins, trustedRoot); }
+        catch (Exception ex) { return ("malformed capability chain: " + ex.GetType().Name, false); }
+    }
+
+    static (string Why, bool Ok) VerifyChainUnchecked(List<object?> chain, object? expectedRootIssuer, bool haveIssuer, IReadOnlyCollection<string>? allowedSuites,
+        IReadOnlyDictionary<string, string>? pqPins, Dictionary<string, object?>? trustedRoot)
+    {
+        if (chain == null) return ("empty chain", false);
         if (chain.Count == 0) return ("empty chain", false);
         if (chain.Count > MaxChainHops) return ($"chain too long (max {MaxChainHops} hops)", false); // before any signature work
+        if (CaveatLimitExceeded(chain)) return (CaveatLimitReason, false);
         for (int i = 0; i < chain.Count; i++) if (!WellTyped(chain[i])) return ($"hop {i}: malformed capability", false);
         var root = (Dictionary<string, object?>)chain[0]!;
         if (Has(root, "parent")) return ("hop 0: root must not have a parent", false);
         if (haveIssuer && !StrEq(Get(root, "issuer"), expectedRootIssuer)) return ("hop 0: root issuer is not the expected principal", false);
-        var e = CheckSig(root, Get(root, "issuer"), "hop 0");
+        var rootPol = SuitePolicyError(Get(root, "alg"), "hop 0", allowedSuites);
+        if (rootPol != null) return (rootPol, false);
+        var (rootPq, rootPqErr) = ResolveRootPq(root, pqPins, trustedRoot);
+        if (rootPqErr != null) return (rootPqErr, false);
+        var e = CheckSig(root, Get(root, "issuer"), "hop 0", rootPq);
         if (e != "") return (e, false);
         for (int i = 1; i < chain.Count; i++)
         {
@@ -773,7 +995,12 @@ public static class Pca
             var c = (Dictionary<string, object?>)chain[i]!;
             if (!StrEq(Get(c, "parent"), CapHash(parent))) return (label + ": broken parent link", false);
             if (!StrEq(Get(c, "issuer"), Get(parent, "holder"))) return (label + ": issuer is not the parent's bound holder", false);
-            e = CheckSig(c, Get(parent, "holder"), label);
+            var pol = SuitePolicyError(Get(c, "alg"), label, allowedSuites);
+            if (pol != null) return (pol, false);
+            var unbound = PqBindingError(c, Get(parent, "holder_pq"), label);
+            if (unbound != null) return (unbound, false);
+            e = CheckSig(c, Get(parent, "holder"), label,
+                PinnedPq.Resolve(Get(parent, "holder") as string, Get(c, "pq_pk"), holderPq: Get(parent, "holder_pq")));
             if (e != "") return (e, false);
             var pc = (List<object?>)Get(parent, "caveats")!;
             var cc = (List<object?>)Get(c, "caveats")!;
@@ -839,7 +1066,7 @@ public static class Pca
             for (int i = 0; i < chain.Count; i++)
             {
                 if (chain[i] is not Dictionary<string, object?> c) return $"cap_chain[{i}] must be an object";
-                if (!OnlyKeys(c, "id", "issuer", "holder", "body_digest", "caveats", "sig", "parent", "alg", "pq_pk", "pq_sig")) return $"unknown field in cap_chain[{i}]";
+                if (!OnlyKeys(c, "id", "issuer", "holder", "body_digest", "caveats", "sig", "parent", "alg", "pq_pk", "pq_sig", "holder_pq")) return $"unknown field in cap_chain[{i}]";
                 foreach (var k in new[] { "id", "issuer", "holder", "body_digest" })
                     if (B64uDecode(Get(c, k), 32) == null) return $"cap_chain[{i}].{k} is not canonical base64url (32 bytes)";
                 // B4 crypto-agility: validate the hop's `alg`/`sig`/`pq_pk`/`pq_sig` per suite, exactly as the
@@ -847,6 +1074,7 @@ public static class Pca
                 var hopSigErr = ValidateSignatureWire(c);
                 if (hopSigErr != null) return $"cap_chain[{i}]: {hopSigErr}";
                 if (c.ContainsKey("parent") && B64uDecode(c["parent"], 32) == null) return $"cap_chain[{i}].parent is not canonical base64url (32 bytes)";
+                if (c.ContainsKey("holder_pq") && B64uDecode(c["holder_pq"], 32) == null) return $"cap_chain[{i}].holder_pq is not canonical base64url (32 bytes)";
                 if (Get(c, "caveats") is not List<object?> cv || !cv.All(x => x is Dictionary<string, object?> d && Get(d, "type") is string)) return $"cap_chain[{i}].caveats must be an array of {{type,...}} objects";
             }
 
@@ -891,9 +1119,21 @@ public static class Pca
     }
 
     /// <summary>Verify RAW signed bytes: strict-parse (a parse failure or non-object is a `wire` failure), then verify.</summary>
-    public static Verdict VerifyRaw(string pcactnJson, Dictionary<string, object?> grant, long now, string audience)
+    public static Verdict VerifyRaw(string pcactnJson, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null)
     {
         object? tree;
+        if (pcactnJson == null) // R6-05: total entry point (a null document is a wire failure, not a NullReferenceException)
+        {
+            var nul = new Verdict { Allow = false, Reason = "wire: PCActn is not an object" };
+            nul.Checks["wire"] = false;
+            return nul;
+        }
+        if (ArtifactTooLarge(pcactnJson)) // FIRST: before any parsing
+        {
+            var big = new Verdict { Allow = false, Reason = "wire: " + ArtifactSizeReason };
+            big.Checks["wire"] = false;
+            return big;
+        }
         try { tree = ParseStrict(pcactnJson); }
         catch (Exception e)
         {
@@ -901,10 +1141,23 @@ public static class Pca
             v.Checks["wire"] = false;
             return v;
         }
-        return VerifyPcactnCore(tree, grant, now, audience);
+        return VerifyPcactnCore(tree, grant, now, audience, allowedSuites);
     }
 
-    public static Verdict VerifyPcactnCore(object? pcactn, Dictionary<string, object?> grant, long now, string audience)
+    public static Verdict VerifyPcactnCore(object? pcactn, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null)
+    {
+        // TOTAL (R6-05): the wire check runs outside the per-check try below, so guard the whole entry point.
+        try { return VerifyPcactnCoreUnchecked(pcactn, grant, now, audience, allowedSuites); }
+        catch (Exception ex)
+        {
+            var v = new Verdict { Allow = false, Reason = "wire: malformed input (" + ex.GetType().Name + ")" };
+            v.Checks.Clear();
+            v.Checks["wire"] = false;
+            return v;
+        }
+    }
+
+    static Verdict VerifyPcactnCoreUnchecked(object? pcactn, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites)
     {
         var v = new Verdict();
         var wire = ValidateWire(pcactn);
@@ -939,11 +1192,12 @@ public static class Pca
             var chain = (List<object?>)p["cap_chain"]!;
             if (chain.Count == 0) Fail("chain", "empty chain");
             else if (chain.Count > MaxChainHops) Fail("chain", $"chain too long (max {MaxChainHops} hops)"); // before any signature work
+            else if (CaveatLimitExceeded(chain)) Fail("chain", CaveatLimitReason); // before any hashing or signature work
             else if (CapHash(chain[0]) != CapHash(grant)) Fail("chain", "chain root is not the grant");
             else
             {
                 var gi = Get(grant, "issuer");
-                var (why, ok) = VerifyChain(chain, gi, gi != null);
+                var (why, ok) = VerifyChain(chain, gi, gi != null, allowedSuites, trustedRoot: grant); // chain[0] == grant was checked above
                 if (ok) v.Checks["chain"] = true; else Fail("chain", why);
             }
 
@@ -965,8 +1219,12 @@ public static class Pca
             if (leaf != null && VerifyInclusion(root, proof, leaf)) v.Checks["plan_inclusion"] = true;
             else Fail("plan_inclusion", "action is not a node of the committed plan");
 
-            if (chain.Count > 0 && chain[^1] is Dictionary<string, object?> leafCap
-                && VerifyLeafSuite(p, Get(leafCap, "holder"), ThresholdMessage(p))) v.Checks["leaf_signature"] = true;
+            var leafCapObj = chain.Count > 0 ? chain[^1] as Dictionary<string, object?> : null;
+            var leafErr = leafCapObj == null ? null
+                : SuitePolicyError(Get(p, "alg"), "leaf", allowedSuites) ?? PqBindingError(p, Get(leafCapObj, "holder_pq"), "leaf");
+            if (leafErr != null) Fail("leaf_signature", leafErr);
+            else if (leafCapObj != null && VerifySuite(p, Get(leafCapObj, "holder"), ThresholdMessage(p),
+                PinnedPq.Resolve(Get(leafCapObj, "holder") as string, Get(p, "pq_pk"), holderPq: Get(leafCapObj, "holder_pq")))) v.Checks["leaf_signature"] = true;
             else Fail("leaf_signature", "signature does not verify under the leaf holder key");
 
             if (counter >= 0) v.Checks["counter"] = true;
