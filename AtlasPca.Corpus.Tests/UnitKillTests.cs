@@ -385,6 +385,11 @@ public class UnitKillTests
             var pins = new Dictionary<string, string> { [issuer] = PqPk(k) };
             Assert.Equal("", Why(Pca.VerifyChain(Li(root), issuer, true, null, pins, null)));
             Assert.Equal("", Why(Pca.VerifyChain(Li(root), issuer, true, null, null, root)));
+            // 0.4.2: trusted root AND a pin for the issuer must agree (the stored grant never overrides a disagreeing pin)
+            Assert.Equal("", Why(Pca.VerifyChain(Li(root), issuer, true, null, pins, root)));
+            Assert.Equal($"hop 0: root suite '{alg}': the server-side PQ pin for the root issuer (policy.pqPins) does not match the stored grant's pq_pk (fail closed)",
+                Why(Pca.VerifyChain(Li(root), issuer, true, null, new Dictionary<string, string> { [issuer] = PqPk(PqKey()) }, root)));
+            Assert.Equal("", Why(Pca.VerifyChain(Li(root), issuer, true, null, new Dictionary<string, string> { [agent] = PqPk(PqKey()) }, root)));
             Assert.Equal("", Why(Pca.VerifyChain(Li(root), "", false, null, pins, null)));
             Assert.Equal(Refusal(alg), Why(Pca.VerifyChain(Li(root), issuer, true)));
             Assert.Equal(Refusal(alg), Why(Pca.VerifyChain(Li(root), issuer, true, null, new Dictionary<string, string> { [issuer] = PqPk(PqKey()) }, null)));
@@ -631,7 +636,9 @@ public class UnitKillTests
             Assert.False(Pq.MlDsa65Verify(pkb, msg, new byte[3308])); Assert.False(Pq.MlDsa65Verify(pkb, msg, new byte[3310])); Assert.False(Pq.MlDsa65Verify(pkb, new byte[] { 1 }, sgb));
         }
         Assert.Equal(1952, Pq.MlDsa65PublicKeyBytes); Assert.Equal(3309, Pq.MlDsa65SignatureBytes); Assert.Equal(64, Pq.Ed25519SignatureBytes);
-        Assert.Equal(3, Pq.Suites.Count); Assert.Equal(64, Pq.Suites["ed25519"].SigBytes); Assert.False(Pq.Suites["ed25519"].NeedsPqPk); Assert.True(Pq.Suites["ml-dsa-65"].NeedsPqPk);
+        Assert.Equal(LessNative.Available ? 12 : 10, Pq.Suites.Count); Assert.Equal(14, Pq.RegisteredSuites.Count); Assert.Equal(Pq.Suites.Count, Pq.SupportedSuites().Count);
+        Assert.Equal("unsupported_suite: less-cat1", Pq.Refusal("less-cat1")); Assert.Equal("unknown signature alg 'bogus'", Pq.Refusal("bogus"));
+        Assert.Equal(64, Pq.Suites["ed25519"].SigBytes); Assert.False(Pq.Suites["ed25519"].NeedsPqPk); Assert.True(Pq.Suites["ml-dsa-65"].NeedsPqPk);
         Assert.False(Pq.Suites["ml-dsa-65"].NeedsPqSig); Assert.True(Pq.Suites["hybrid-ed25519-ml-dsa-65"].NeedsPqSig); Assert.Equal(3309, Pq.Suites["ml-dsa-65"].SigBytes);
     }
     sealed record PinnedPqView(string Key);
@@ -699,6 +706,360 @@ public class UnitKillTests
         Assert.Null(typeof(Pca).GetMethod("SignerSetHash", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, new object[] { Li("x") }));
         Assert.Null(typeof(Pca).GetMethod("SignerSetHash", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, new object[] { Li(M(("role", 5), ("publicKey", a))) }));
         Assert.Null(typeof(Pca).GetMethod("SignerSetHash", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, new object[] { Li(M(("role", "r"))) }));
+    }
+
+    // ------------------------------------------------------------------ Intent Layer M2: envelope.intent
+    /// <summary>Cross-language pin: b64u(sha256(strictCanonical({d:"atlas-pca/goal/v1\0", goal:"pca-intent:v1:B32:B32", salt:"salt"}))).</summary>
+    const string IntentCommit = "ydb-xdDmGIg5nClx85Jyt4NstgcNXKLofdPhe5NrNA4";
+    static D IntentSlot() => M(("ref", B32), ("map_digest", B32), ("goal_salt", "salt"), ("fidelity_ppm", N("950000")), ("residual_risk_ppm", N("4310000")));
+    static D IntentGrant(object? goalCommit) => M(("caveats", Li(M(("type", "max_spend"), ("usd", N("100"))), M(("type", "envelope"), ("goal_commit", goalCommit)))));
+
+    [Fact] public void IntentWire()
+    {
+        Assert.Null(Pca.ValidateIntentWire(IntentSlot()));
+        Assert.Equal("'intent' must be an object", Pca.ValidateIntentWire(null));
+        Assert.Equal("'intent' must be an object", Pca.ValidateIntentWire("x"));
+        Assert.Equal("'intent' must be an object", Pca.ValidateIntentWire(Li(IntentSlot())));
+        Assert.Equal("unknown field 'intent.note'", Pca.ValidateIntentWire(IntentSlot().Also(i => i["note"] = "x")));
+        Assert.Equal("missing field 'intent.map_digest'", Pca.ValidateIntentWire(IntentSlot().Also(i => i.Remove("map_digest"))));
+        Assert.Equal("'intent.ref' is not canonical base64url (32 bytes)", Pca.ValidateIntentWire(IntentSlot().Also(i => i["ref"] = B32 + "=")));
+        Assert.Equal("'intent.map_digest' is not canonical base64url (32 bytes)", Pca.ValidateIntentWire(IntentSlot().Also(i => i["map_digest"] = "+" + B32[1..])));
+        const string saltErr = "'intent.goal_salt' must be a non-empty string (<= 128 UTF-8 bytes)";
+        Assert.Equal(saltErr, Pca.ValidateIntentWire(IntentSlot().Also(i => i["goal_salt"] = "")));
+        Assert.Equal(saltErr, Pca.ValidateIntentWire(IntentSlot().Also(i => i["goal_salt"] = N("5"))));
+        Assert.Null(Pca.ValidateIntentWire(IntentSlot().Also(i => i["goal_salt"] = new string('\u00e9', 64))));
+        Assert.Equal(saltErr, Pca.ValidateIntentWire(IntentSlot().Also(i => i["goal_salt"] = new string('\u00e9', 64) + "a")));
+        Assert.Null(Pca.ValidateIntentWire(IntentSlot().Also(i => { i["fidelity_ppm"] = N("1000000"); i["residual_risk_ppm"] = N("9007199254740991"); })));
+        foreach (var bad in new object?[] { N("1000001"), N("-1"), N("1.5"), "950000", true })
+            Assert.Equal("'intent.fidelity_ppm' must be a safe integer in [0, 1000000]", Pca.ValidateIntentWire(IntentSlot().Also(i => i["fidelity_ppm"] = bad)));
+        foreach (var bad in new object?[] { N("-1"), N("0.25"), true })
+            Assert.Equal("'intent.residual_risk_ppm' must be a non-negative safe integer", Pca.ValidateIntentWire(IntentSlot().Also(i => i["residual_risk_ppm"] = bad)));
+    }
+
+    [Fact] public void IntentPolicyAndBinding()
+    {
+        Assert.Equal(IntentCommit, Pca.IntentGoalCommit(B32, B32, "salt"));
+        Assert.Equal("pca-intent:v1:" + B32 + ":" + B32, Pca.IntentGoal(B32, B32));
+        Assert.False(new IntentPolicy().IsActive);
+        Assert.True(new IntentPolicy(Require: true).IsActive);
+        Assert.True(new IntentPolicy(MaxResidualRiskPpm: 1).IsActive);
+        Assert.Null(IntentPolicy.FromJson("x"));
+        Assert.False(IntentPolicy.FromJson(M(("require", false)))!.IsActive);
+        Assert.True(IntentPolicy.FromJson(M(("min_fidelity_ppm", null)))!.IsActive);
+        Assert.True(double.IsNaN(IntentPolicy.FromJson(M(("min_fidelity_ppm", "1")))!.MinFidelityPpm!.Value));
+        Assert.Equal((double?)950000.0, IntentPolicy.FromJson(Pca.ParseJson("{\"min_fidelity_ppm\":950000}"))!.MinFidelityPpm);
+
+        var g = IntentGrant(IntentCommit);
+        Assert.Null(Pca.DecideIntent(null, false, g, null));
+        Assert.Null(Pca.DecideIntent(null, false, g, new IntentPolicy()));
+        const string none = "this verifier requires an intent binding but the PCActn carries none";
+        Assert.Equal(none, Pca.DecideIntent(null, false, g, new IntentPolicy(Require: true)));
+        Assert.Equal(none, Pca.DecideIntent(null, false, g, new IntentPolicy(MinFidelityPpm: 1)));
+        Assert.Equal("", Pca.DecideIntent(IntentSlot(), true, g, null));
+        Assert.Equal("", Pca.DecideIntent(IntentSlot(), true, g, new IntentPolicy(true, 950000, 4310000)));
+        const string mis = "intent policy misconfigured: thresholds must be non-negative safe integers (fail closed)";
+        foreach (var bad in new[] { -1.0, 0.5, -0.0, double.NaN, 9007199254740992.0 })
+            Assert.Equal(mis, Pca.DecideIntent(IntentSlot(), true, g, new IntentPolicy(MinFidelityPpm: bad)));
+        Assert.Equal(mis, Pca.DecideIntent(IntentSlot(), true, g, new IntentPolicy(MaxResidualRiskPpm: 0.5)));
+        Assert.Equal("intent fidelity 950000 ppm is below the policy minimum 950001", Pca.DecideIntent(IntentSlot(), true, g, new IntentPolicy(MinFidelityPpm: 950001)));
+        Assert.Equal("intent residual risk 4310000 ppm exceeds the policy maximum 4309999", Pca.DecideIntent(IntentSlot(), true, g, new IntentPolicy(MaxResidualRiskPpm: 4309999)));
+        const string open = "intent ref / map_digest / goal_salt do not open the root grant's goal commitment";
+        Assert.Equal(open, Pca.DecideIntent(IntentSlot().Also(i => i["goal_salt"] = "wrong-salt"), true, g, null));
+        const string noEnv = "the root grant carries no envelope goal commitment to bind the intent to";
+        Assert.Equal(noEnv, Pca.DecideIntent(IntentSlot(), true, IntentGrant(N("7")), null));
+        Assert.Equal(noEnv, Pca.DecideIntent(IntentSlot(), true, M(("caveats", Li())), null));
+        Assert.Equal(noEnv, Pca.DecideIntent(IntentSlot(), true, new D(), null));
+        var two = M(("caveats", Li(M(("type", "envelope"), ("goal_commit", B32)), M(("type", "envelope"), ("goal_commit", IntentCommit)))));
+        Assert.Equal(open, Pca.DecideIntent(IntentSlot(), true, two, null));
+    }
+
+    [Fact] public void IntentVerify()
+    {
+        var baseKeys = new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" };
+        var withIntent = baseKeys.Append("intent").ToArray();
+        var raw = (string)Vec("valid-raw-json-format-insensitive")["pcactn_json"]!;
+        var g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: false));
+        Assert.True(g.Allow); Assert.Equal(baseKeys, g.Checks.Keys.ToArray());
+        g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: true));
+        Assert.False(g.Allow);
+        Assert.Equal(withIntent, g.Checks.Keys.ToArray());
+        Assert.False(g.Checks["intent"]);
+        Assert.Equal("intent: this verifier requires an intent binding but the PCActn carries none", g.Reason);
+        var p = Valid();
+        p["intent"] = IntentSlot();
+        g = Pca.VerifyPcactnCore(p, ValidGrant(), NOW, AUD);
+        Assert.Equal(withIntent, g.Checks.Keys.ToArray());
+        Assert.True(g.Checks["wire"]); Assert.False(g.Checks["leaf_signature"]); Assert.False(g.Checks["intent"]);
+        var bound = Clone(ValidGrant()); bound["caveats"] = IntentGrant(IntentCommit)["caveats"];
+        Assert.True(Pca.VerifyPcactnCore(p, bound, NOW, AUD).Checks["intent"]);
+        p["intent"] = null;
+        g = Pca.VerifyPcactnCore(p, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: true));
+        Assert.Equal(new[] { "wire" }, g.Checks.Keys.ToArray());
+        Assert.Equal("wire: 'intent' must be an object", g.Reason);
+    }
+
+    // ------------------------------------------------------------------ Intent Layer M2: mutation-kill boundaries
+    const string EFid = "'intent.fidelity_ppm' must be a safe integer in [0, 1000000]";
+    const string ERisk = "'intent.residual_risk_ppm' must be a non-negative safe integer";
+    const string ESalt = "'intent.goal_salt' must be a non-empty string (<= 128 UTF-8 bytes)";
+    const string ERef = "'intent.ref' is not canonical base64url (32 bytes)";
+    const string EMap = "'intent.map_digest' is not canonical base64url (32 bytes)";
+    const string IMis = "intent policy misconfigured: thresholds must be non-negative safe integers (fail closed)";
+    const string INone = "this verifier requires an intent binding but the PCActn carries none";
+    const string INoEnv = "the root grant carries no envelope goal commitment to bind the intent to";
+    const string IOpen = "intent ref / map_digest / goal_salt do not open the root grant's goal commitment";
+    static readonly string[] BaseKeys = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" };
+    static readonly string[] IntentKeys = BaseKeys.Append("intent").ToArray();
+
+    static D SlotWith(string k, object? v) => IntentSlot().Also(i => i[k] = v);
+    static D Envelope(object? goalCommit) => M(("type", "envelope"), ("goal_commit", goalCommit));
+    static D GrantOf(params object?[] caveats) => M(("caveats", new L(caveats)));
+    static string? Decide(D? intent, D? grant, IntentPolicy? pol) => Pca.DecideIntent(intent, intent != null, grant, pol);
+    static IntentPolicy Pol(bool require = false, double? min = null, double? max = null) => new(require, min, max);
+
+    /// <summary>A real root grant (principal -> agent) whose caveats are [max_spend, envelope(goal_commit)].</summary>
+    static D IntentRoot() => Cap(Pub("principal"), Pub("agent"), Li(M(("type", "max_spend"), ("usd", N("100"))), Envelope(IntentCommit)), null, "principal");
+    /// <summary>The valid PCActn re-rooted on <paramref name="root"/>, carrying <paramref name="intent"/>, re-signed by the agent leaf key.</summary>
+    static D SignedWithIntent(D root, D? intent)
+    {
+        var p = Valid();
+        p["cap_chain"] = Li(root);
+        p["grant_ref"] = root["id"];
+        if (intent != null) p["intent"] = intent;
+        p["sig"] = EdSign("agent", Pca.ThresholdMessage(p));
+        return p;
+    }
+
+    [Fact] public void IntentKillWireBoundaries()
+    {
+        foreach (var ok in new object?[] { N("0"), N("1"), N("999999"), N("1000000") }) Assert.Null(Pca.ValidateIntentWire(SlotWith("fidelity_ppm", ok)));
+        foreach (var bad in new object?[] { N("-1"), N("1000001"), N("9007199254740991"), N("1.5"), N("0.5"), "1", true, false, null })
+            Assert.Equal(EFid, Pca.ValidateIntentWire(SlotWith("fidelity_ppm", bad)));
+        foreach (var ok in new object?[] { N("0"), N("1000001"), N("9007199254740991") }) Assert.Null(Pca.ValidateIntentWire(SlotWith("residual_risk_ppm", ok)));
+        foreach (var bad in new object?[] { N("-1"), N("9007199254740992"), N("0.25"), "0", true, null })
+            Assert.Equal(ERisk, Pca.ValidateIntentWire(SlotWith("residual_risk_ppm", bad)));
+        foreach (var ok in new[] { "a", new string('a', 128), new string('é', 64) }) Assert.Null(Pca.ValidateIntentWire(SlotWith("goal_salt", ok)));
+        foreach (var bad in new object?[] { new string('a', 129), new string('é', 64) + "a", new string('é', 65), "", N("5"), null, true, Li(), M() })
+            Assert.Equal(ESalt, Pca.ValidateIntentWire(SlotWith("goal_salt", bad)));
+        string b31 = Pca.B64u(new byte[31]), b33 = Pca.B64u(new byte[33]);
+        foreach (var bad in new object?[] { b31, b33, B32 + "=", "+" + B32[1..], "/" + B32[1..], "", N("1"), null, true })
+            Assert.Equal(ERef, Pca.ValidateIntentWire(SlotWith("ref", bad)));
+        foreach (var bad in new object?[] { b31, b33, B32 + "=", "+" + B32[1..], "", N("1"), null })
+            Assert.Equal(EMap, Pca.ValidateIntentWire(SlotWith("map_digest", bad)));
+        var all = IntentSlot().Also(i => { i["ref"] = ""; i["map_digest"] = ""; i["goal_salt"] = ""; i["fidelity_ppm"] = N("-1"); i["residual_risk_ppm"] = N("-1"); });
+        Assert.Equal(ERef, Pca.ValidateIntentWire(all));
+        all["ref"] = B32; Assert.Equal(EMap, Pca.ValidateIntentWire(all));
+        all["map_digest"] = B32; Assert.Equal(ESalt, Pca.ValidateIntentWire(all));
+        all["goal_salt"] = "s"; Assert.Equal(EFid, Pca.ValidateIntentWire(all));
+        all["fidelity_ppm"] = N("0"); Assert.Equal(ERisk, Pca.ValidateIntentWire(all));
+        all["residual_risk_ppm"] = N("0"); Assert.Null(Pca.ValidateIntentWire(all));
+    }
+
+    [Fact] public void IntentKillWireShape()
+    {
+        foreach (var k in new[] { "ref", "map_digest", "goal_salt", "fidelity_ppm", "residual_risk_ppm" })
+            Assert.Equal($"missing field 'intent.{k}'", Pca.ValidateIntentWire(IntentSlot().Also(i => i.Remove(k))));
+        Assert.Equal("unknown field 'intent.note'", Pca.ValidateIntentWire(SlotWith("note", "x")));
+        Assert.Equal("unknown field 'intent.zz'", Pca.ValidateIntentWire(IntentSlot().Also(i => { i.Remove("ref"); i["zz"] = N("1"); })));
+        foreach (var bad in new object?[] { null, "x", N("1"), true, Li(IntentSlot()), Li() })
+            Assert.Equal("'intent' must be an object", Pca.ValidateIntentWire(bad));
+        Assert.Equal("missing field 'intent.ref'", Pca.ValidateIntentWire(M()));
+    }
+
+    [Fact] public void IntentKillPolicy()
+    {
+        Assert.False(Pol().IsActive);
+        Assert.True(Pol(require: true).IsActive);
+        Assert.True(Pol(min: 0).IsActive);
+        Assert.True(Pol(max: 0).IsActive);
+        Assert.Null(IntentPolicy.FromJson(null));
+        Assert.Null(IntentPolicy.FromJson(Li()));
+        Assert.False(IntentPolicy.FromJson(M())!.IsActive);
+        Assert.False(IntentPolicy.FromJson(M(("require", false)))!.IsActive);
+        Assert.False(IntentPolicy.FromJson(M(("require", "true")))!.IsActive);
+        Assert.False(IntentPolicy.FromJson(M(("require", N("1"))))!.IsActive);
+        Assert.True(IntentPolicy.FromJson(M(("require", true)))!.IsActive);
+        var fj = IntentPolicy.FromJson(M(("min_fidelity_ppm", N("950000")), ("max_residual_risk_ppm", 7L)))!;
+        Assert.Equal(950000.0, fj.MinFidelityPpm!.Value);
+        Assert.Equal(7.0, fj.MaxResidualRiskPpm!.Value);
+        Assert.False(fj.Require);
+        Assert.Equal(3.0, IntentPolicy.FromJson(M(("max_residual_risk_ppm", 3)))!.MaxResidualRiskPpm!.Value);
+        Assert.Equal(2.5, IntentPolicy.FromJson(M(("max_residual_risk_ppm", 2.5)))!.MaxResidualRiskPpm!.Value);
+        Assert.Equal(-1.0, IntentPolicy.FromJson(M(("min_fidelity_ppm", N("-1"))))!.MinFidelityPpm!.Value);
+        Assert.Equal(0.5, IntentPolicy.FromJson(M(("max_residual_risk_ppm", N("0.5"))))!.MaxResidualRiskPpm!.Value);
+        Assert.True(double.IsNaN(IntentPolicy.FromJson(M(("max_residual_risk_ppm", null)))!.MaxResidualRiskPpm!.Value));
+        Assert.True(double.IsNaN(IntentPolicy.FromJson(M(("max_residual_risk_ppm", true)))!.MaxResidualRiskPpm!.Value));
+        Assert.True(double.IsNaN(IntentPolicy.FromJson(M(("max_residual_risk_ppm", N("x"))))!.MaxResidualRiskPpm!.Value));
+        Assert.Null(IntentPolicy.FromJson(M(("require", true)))!.MinFidelityPpm);
+        foreach (var ok in new double?[] { null, 0.0, 1.0, 950000.0, 9007199254740991.0 }) Assert.True(Pca.OkThreshold(ok), $"{ok}");
+        foreach (var bad in new[] { -1.0, -0.0, 0.5, 1.5, double.NaN, double.PositiveInfinity, double.NegativeInfinity, 9007199254740992.0, -9007199254740991.0 })
+            Assert.False(Pca.OkThreshold(bad), $"{bad}");
+        Assert.False(Pca.OkThreshold(BitConverter.Int64BitsToDouble(long.MinValue))); // -0 built bitwise
+    }
+
+    [Fact] public void IntentKillDecide()
+    {
+        var g = GrantOf(Envelope(IntentCommit));
+        Assert.Null(Decide(null, g, null));
+        Assert.Null(Decide(null, g, Pol()));
+        Assert.Equal(INone, Decide(null, g, Pol(require: true)));
+        Assert.Equal(INone, Decide(null, g, Pol(min: 0)));
+        Assert.Equal(INone, Decide(null, g, Pol(max: 0)));
+        foreach (var bad in new[] { -1.0, 0.5, double.NaN, BitConverter.Int64BitsToDouble(long.MinValue) })
+        {
+            Assert.Equal(IMis, Decide(null, g, Pol(min: bad)));
+            Assert.Equal(IMis, Decide(null, g, Pol(require: true, max: bad)));
+            Assert.Equal(IMis, Decide(IntentSlot(), M(), Pol(min: bad)));
+            Assert.Equal(IMis, Decide(IntentSlot(), g, Pol(min: 0, max: bad)));
+            Assert.Equal(IMis, Decide(IntentSlot(), g, Pol(min: bad, max: 0)));
+        }
+        Assert.Equal(INoEnv, Decide(IntentSlot(), M(), Pol(min: 1e6, max: 0)));
+        Assert.Equal("", Decide(IntentSlot(), g, null));
+        Assert.Equal("", Decide(IntentSlot(), g, Pol()));
+        Assert.Equal("", Decide(IntentSlot(), g, Pol(require: true)));
+        Assert.Equal("", Decide(IntentSlot(), g, Pol(min: 950000)));
+        Assert.Equal("", Decide(IntentSlot(), g, Pol(min: 949999)));
+        Assert.Equal("", Decide(IntentSlot(), g, Pol(min: 0)));
+        Assert.Equal("intent fidelity 950000 ppm is below the policy minimum 950001", Decide(IntentSlot(), g, Pol(min: 950001)));
+        Assert.Equal("", Decide(IntentSlot(), g, Pol(max: 4310000)));
+        Assert.Equal("", Decide(IntentSlot(), g, Pol(max: 4310001)));
+        Assert.Equal("intent residual risk 4310000 ppm exceeds the policy maximum 4309999", Decide(IntentSlot(), g, Pol(max: 4309999)));
+        Assert.Equal("intent residual risk 4310000 ppm exceeds the policy maximum 0", Decide(IntentSlot(), g, Pol(max: 0)));
+        Assert.Equal("intent fidelity 950000 ppm is below the policy minimum 950001", Decide(IntentSlot(), g, Pol(min: 950001, max: 0)));
+        Assert.Equal("", Decide(IntentSlot(), g, Pol(true, 950000, 4310000)));
+        var zero = IntentSlot().Also(i => { i["fidelity_ppm"] = N("0"); i["residual_risk_ppm"] = N("0"); });
+        Assert.Equal("", Decide(zero, g, Pol(min: 0, max: 0)));
+        Assert.Equal("intent fidelity 0 ppm is below the policy minimum 1", Decide(zero, g, Pol(min: 1)));
+        var top = IntentSlot().Also(i => { i["fidelity_ppm"] = N("1000000"); i["residual_risk_ppm"] = N("9007199254740991"); });
+        Assert.Equal("", Decide(top, g, Pol(min: 1e6, max: 9007199254740991.0)));
+        Assert.Equal("intent residual risk 9007199254740991 ppm exceeds the policy maximum 9007199254740990", Decide(top, g, Pol(max: 9007199254740990.0)));
+    }
+
+    [Fact] public void IntentKillRootGrant()
+    {
+        var env = Envelope(IntentCommit);
+        Assert.Equal("", Decide(IntentSlot(), GrantOf(M(("type", "max_spend")), env), null));
+        Assert.Equal(IOpen, Decide(IntentSlot(), GrantOf(Envelope(B32), env), null));
+        Assert.Equal("", Decide(IntentSlot(), GrantOf(env, Envelope(B32)), null));
+        Assert.Equal(INoEnv, Decide(IntentSlot(), GrantOf(Envelope(N("7")), env), null));
+        Assert.Equal("", Decide(IntentSlot(), GrantOf("envelope", null, N("1"), Li(env), M(("type", "Envelope"), ("goal_commit", B32)), M(("goal_commit", B32)), env), null));
+        foreach (var bad in new object?[] { N("7"), null, true, Li(), M() }) Assert.Equal(INoEnv, Decide(IntentSlot(), GrantOf(Envelope(bad)), null));
+        Assert.Equal(INoEnv, Decide(IntentSlot(), GrantOf(M(("type", "envelope"))), null));
+        Assert.Equal(INoEnv, Decide(IntentSlot(), M(), null));
+        Assert.Equal(INoEnv, Decide(IntentSlot(), null, null));
+        Assert.Equal(INoEnv, Decide(IntentSlot(), M(("caveats", M(("0", env)))), null));
+        Assert.Equal(INoEnv, Decide(IntentSlot(), M(("caveats", "x")), null));
+        Assert.Equal(INoEnv, Decide(IntentSlot(), GrantOf(), null));
+        Assert.Equal(INoEnv, Decide(IntentSlot(), GrantOf(M(("type", "max_spend"))), null));
+        Assert.Equal(IntentCommit, Pca.RootGoalCommit(GrantOf("x", env, Envelope(B32))));
+        Assert.Null(Pca.RootGoalCommit(null));
+        Assert.Equal(IOpen, Decide(SlotWith("ref", B32.Replace('q', 'r')), GrantOf(env), null));
+        Assert.Equal(IOpen, Decide(SlotWith("map_digest", Pca.B64u(new byte[32])), GrantOf(env), null));
+        Assert.Equal(IOpen, Decide(SlotWith("goal_salt", "salt "), GrantOf(env), null));
+        Assert.Equal("", Decide(SlotWith("fidelity_ppm", N("1")), GrantOf(env), null));
+        Assert.Equal("pca-intent:v1:r", Pca.IntentGoal("r", null));
+        Assert.Equal("pca-intent:v1:r", Pca.IntentGoal("r", ""));
+        Assert.Equal("pca-intent:v1:r", Pca.IntentGoal("r"));
+        Assert.Equal("pca-intent:v1:r:m", Pca.IntentGoal("r", "m"));
+        Assert.NotEqual(Pca.IntentGoalCommit(B32, B32, "salt"), Pca.IntentGoalCommit(B32, B32, "salt2"));
+    }
+
+    [Fact] public void IntentKillVerifySigned()
+    {
+        var root = IntentRoot();
+        var g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD);
+        Assert.True(g.Allow, g.Reason);
+        Assert.Equal(BaseKeys, g.Checks.Keys.ToArray());
+        g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD, intentPolicy: Pol());
+        Assert.True(g.Allow); Assert.Equal(BaseKeys, g.Checks.Keys.ToArray());
+        g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD, intentPolicy: Pol(min: 0));
+        Assert.False(g.Allow); Assert.Equal(IntentKeys, g.Checks.Keys.ToArray());
+        Assert.Equal("intent: " + INone, g.Reason);
+        var p = SignedWithIntent(root, IntentSlot());
+        g = Pca.VerifyPcactnCore(p, root, NOW, AUD);
+        Assert.True(g.Allow, g.Reason);
+        Assert.Equal("", g.Reason);
+        Assert.Equal(IntentKeys, g.Checks.Keys.ToArray());
+        Assert.True(g.Checks["intent"]);
+        Assert.True(Pca.VerifyRaw(Pca.Canonicalize(p), root, NOW, AUD, intentPolicy: Pol(require: true)).Allow);
+        Assert.True(Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(true, 950000, 4310000)).Allow);
+        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(min: 950001));
+        Assert.False(g.Allow);
+        Assert.Equal("intent: intent fidelity 950000 ppm is below the policy minimum 950001", g.Reason);
+        foreach (var k in BaseKeys) Assert.True(g.Checks[k], k);
+        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(max: 4309999));
+        Assert.False(g.Allow); Assert.False(g.Checks["intent"]);
+        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(min: -1));
+        Assert.False(g.Allow); Assert.Equal("intent: " + IMis, g.Reason);
+        var edge = IntentSlot().Also(i => { i["fidelity_ppm"] = N("1000000"); i["residual_risk_ppm"] = N("0"); });
+        Assert.True(Pca.VerifyPcactnCore(SignedWithIntent(root, edge), root, NOW, AUD).Allow);
+        edge["fidelity_ppm"] = N("0"); edge["residual_risk_ppm"] = N("9007199254740991");
+        Assert.True(Pca.VerifyPcactnCore(SignedWithIntent(root, edge), root, NOW, AUD).Allow);
+        // signed: tampering after signing breaks leaf_signature while the binding itself still holds
+        var t = SignedWithIntent(root, IntentSlot());
+        As(t["intent"])["fidelity_ppm"] = N("999999");
+        g = Pca.VerifyPcactnCore(t, root, NOW, AUD);
+        Assert.False(g.Allow);
+        Assert.False(g.Checks["leaf_signature"]);
+        Assert.True(g.Checks["intent"]);
+        Assert.Equal(IntentKeys, g.Checks.Keys.ToArray());
+        var s = SignedWithIntent(root, IntentSlot()).Also(x => x.Remove("intent"));
+        g = Pca.VerifyPcactnCore(s, root, NOW, AUD);
+        Assert.False(g.Checks["leaf_signature"]);
+        Assert.Equal(BaseKeys, g.Checks.Keys.ToArray());
+        g = Pca.VerifyPcactnCore(SignedWithIntent(root, SlotWith("goal_salt", "other")), root, NOW, AUD);
+        Assert.Equal("intent: " + IOpen, g.Reason);
+        foreach (var k in BaseKeys) Assert.True(g.Checks[k], k);
+        foreach (var bad in new object?[] { null, "x", Li(), SlotWith("fidelity_ppm", N("1000001")), SlotWith("residual_risk_ppm", N("-1")), SlotWith("goal_salt", new string('é', 64) + "a") })
+        {
+            var w = SignedWithIntent(root, IntentSlot());
+            w["intent"] = bad;
+            g = Pca.VerifyPcactnCore(w, root, NOW, AUD, intentPolicy: Pol(require: true));
+            Assert.False(g.Allow);
+            Assert.Equal(new[] { "wire" }, g.Checks.Keys.ToArray());
+            Assert.StartsWith("wire: ", g.Reason);
+        }
+    }
+
+    [Fact] public void IntentKillThresholdNumericValue()
+    {
+        // validity is judged on the NUMERIC value, whatever the JSON spelling
+        foreach (var ok in new[] { "950000", "950000.0", "950000.00", "9.5e5", "1e6", "1E6", "1e+6", "10e5", "0", "0.0", "0e0", "9007199254740991", "9007199254740991.0" })
+        {
+            var p = IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":" + ok + ",\"max_residual_risk_ppm\":" + ok + "}")!;
+            Assert.True(p.IsActive, ok);
+            Assert.True(Pca.OkThreshold(p.MinFidelityPpm), ok);
+            Assert.True(Pca.OkThreshold(p.MaxResidualRiskPpm), ok);
+        }
+        Assert.Equal(950000.0, IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":950000.0}")!.MinFidelityPpm!.Value);
+        Assert.Equal(1000000.0, IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":1e6}")!.MinFidelityPpm!.Value);
+        var g = GrantOf(Envelope(IntentCommit));
+        foreach (var bad in new[] { "950000.5", "0.5", "-1", "-1.0", "-0", "-0.0", "-0e0", "1e400", "-1e400", "9007199254740992", "1e16", "1e-7", "null", "true", "false", "\"5\"", "[]", "{}" })
+        {
+            var p = IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":" + bad + "}")!;
+            Assert.True(p.IsActive, bad);
+            Assert.False(Pca.OkThreshold(p.MinFidelityPpm), bad);
+            Assert.Equal(IMis, Decide(IntentSlot(), g, p));
+            Assert.Equal(IMis, Decide(IntentSlot(), g, IntentPolicy.FromJsonText("{\"max_residual_risk_ppm\":" + bad + "}")));
+        }
+        Assert.True(Pca.OkThreshold(950000.0));
+        Assert.True(Pca.OkThreshold(1e6));
+        Assert.False(Pca.OkThreshold(950000.5));
+        Assert.Null(IntentPolicy.FromJsonText("[]"));
+        Assert.Null(IntentPolicy.FromJsonText("null"));
+        Assert.False(IntentPolicy.FromJsonText("{}")!.IsActive);
+        Assert.True(IntentPolicy.FromJsonText("{\"require\":true}")!.IsActive);
+        Assert.Equal("", Decide(IntentSlot(), g, IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":950000.0}")));
+        Assert.Equal("", Decide(IntentSlot(), g, IntentPolicy.FromJsonText("{\"max_residual_risk_ppm\":4.31e6}")));
+        Assert.Equal("intent fidelity 950000 ppm is below the policy minimum 1000000", Decide(IntentSlot(), g, IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":1e6}")));
+        Assert.Equal("intent residual risk 4310000 ppm exceeds the policy maximum 4309999", Decide(IntentSlot(), g, IntentPolicy.FromJsonText("{\"max_residual_risk_ppm\":4309999.0}")));
+        var root = IntentRoot();
+        var pc = SignedWithIntent(root, IntentSlot());
+        Assert.True(Pca.VerifyPcactnCore(pc, root, NOW, AUD, intentPolicy: IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":950000.0,\"max_residual_risk_ppm\":4.31e6}")).Allow);
+        var v = Pca.VerifyPcactnCore(pc, root, NOW, AUD, intentPolicy: IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":950000.5}"));
+        Assert.False(v.Allow);
+        Assert.Equal("intent: " + IMis, v.Reason);
+        Assert.ThrowsAny<Exception>(() => IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":}"));
     }
 }
 

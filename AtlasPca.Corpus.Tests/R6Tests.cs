@@ -9,7 +9,7 @@ namespace AtlasPca.Corpus.Tests;
 /// deny, never an exception (R6-05).</summary>
 public class R6Tests
 {
-    static readonly HashSet<string> Supported = new() { "ed25519", "ml-dsa-65", "hybrid-ed25519-ml-dsa-65" };
+    static readonly HashSet<string> Supported = new(Pq.SupportedSuites()); // the capability manifest (SUITES.md)
 
     static string Dir()
     {

@@ -51,7 +51,9 @@ public class R041Tests
         Assert.Equal("'pq_sig' must be absent for alg 'ed25519'", Sw(Share(("sig", B(64)), ("pq_sig", B(3309)))));
         Assert.Equal("'pq_sig' must be absent for alg 'ml-dsa-65'", Sw(Share(("alg", "ml-dsa-65"), ("sig", B(3309)), ("pq_sig", B(3309)))));
         Assert.Equal("'pq_sig' must be absent for alg 'ed25519'", Sw(Share(("sig", B(64)), ("pq_sig", null))));
-        Assert.Equal("unknown signature alg 'ml-dsa-87'", Sw(Share(("alg", "ml-dsa-87"), ("sig", B(4627)))));
+        Assert.Null(Sw(Share(("alg", "ml-dsa-87"), ("sig", B(4627)))));
+        Assert.Equal("unsupported_suite: fn-dsa-512", Sw(Share(("alg", "fn-dsa-512"), ("sig", B(666)))));
+        Assert.Equal("unknown signature alg 'ml-dsa-99'", Sw(Share(("alg", "ml-dsa-99"), ("sig", B(4627)))));
         Assert.Equal("'alg' must be a string", Sw(Share(("alg", N("1")), ("sig", B(64)))));
         Assert.Equal("'alg' must be a string", Sw(Share(("alg", null), ("sig", B(64)))));
         Assert.NotNull(Sw(Share(("alg", "ml-dsa-65"), ("sig", B(3309) + "="))));

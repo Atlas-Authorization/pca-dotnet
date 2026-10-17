@@ -52,7 +52,14 @@ public sealed class PcaMiddleware
             return;
         }
 
-        Dictionary<string, object?>? grant = await _options.GrantResolver(grantRef);
+        Dictionary<string, object?>? grant;
+        try { grant = await _options.GrantResolver(grantRef); }
+        catch (Exception)
+        {
+            // The host's resolver failed: fail closed as TS requirePCA does (403, guard error), never an unhandled 500.
+            await ChallengeAsync(ctx, StatusCodes.Status403Forbidden, "access_denied", "grant resolution failed (fail closed).");
+            return;
+        }
         if (grant is null)
         {
             await ChallengeAsync(ctx, StatusCodes.Status401Unauthorized, "invalid_grant", "No grant is known for this grant_ref.");
@@ -60,7 +67,17 @@ public sealed class PcaMiddleware
         }
 
         // The existing verifier: 8 offline checks, audience vs signed aud, chain rooted at the resolved grant.
-        Verdict verdict = Pca.VerifyPcactnCore(p, grant, _options.Clock(), _options.Audience);
+        IntentV2Context? intentV2 = null;
+        if (_options.IntentV2 != null)
+        {
+            try { intentV2 = await _options.IntentV2(ctx, p); }
+            catch (Exception)
+            {
+                await ChallengeAsync(ctx, StatusCodes.Status403Forbidden, "access_denied", "intent_v2_context_error: the Intent Layer v2 verifier state could not be resolved (fail closed).");
+                return;
+            }
+        }
+        Verdict verdict = Pca.VerifyPcactnCore(p, grant, _options.Clock(), _options.Audience, intentPolicy: _options.IntentPolicy, intentV2: intentV2);
         if (!verdict.Allow)
         {
             await ChallengeAsync(ctx, StatusCodes.Status403Forbidden, "access_denied", verdict.Reason);
@@ -100,9 +117,17 @@ public sealed class PcaMiddleware
         // Body mode: {"pcactn": <PCActn>}. Buffer so downstream can re-read the body.
         ctx.Request.EnableBuffering();
         string body;
-        using (var reader = new StreamReader(ctx.Request.Body, Encoding.UTF8, detectEncodingFromByteOrderMarks: false, leaveOpen: true))
+        try
         {
+            // STRICT UTF-8 (throws on invalid bytes), as the header path: Encoding.UTF8 silently replaced malformed sequences
+            // with U+FFFD, so byte-distinct bodies decoded to the same text. Invalid UTF-8 => 401.
+            using var reader = new StreamReader(ctx.Request.Body, StrictUtf8, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
             body = await reader.ReadToEndAsync();
+        }
+        catch (DecoderFallbackException)
+        {
+            if (ctx.Request.Body.CanSeek) ctx.Request.Body.Position = 0;
+            return (null, ("invalid_request", "The request body is not valid UTF-8."));
         }
         if (ctx.Request.Body.CanSeek) ctx.Request.Body.Position = 0;
 
@@ -126,11 +151,17 @@ public sealed class PcaMiddleware
         return (inner, null);
     }
 
+    static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    /// <summary>
+    /// Writes the challenge. The header carries only the operator's realm and the static error code; the description is NOT
+    /// emitted there because it can carry request-derived text (the verdict reason, a JSON parse error), and TS
+    /// <c>requirePCA</c> puts no reason in its challenge either. The description stays in the JSON body.
+    /// </summary>
     async Task ChallengeAsync(HttpContext ctx, int status, string error, string description)
     {
         ctx.Response.StatusCode = status;
-        ctx.Response.Headers["WWW-Authenticate"] =
-            $"PCA realm=\"{Escape(_options.Realm)}\", error=\"{error}\", error_description=\"{Escape(description)}\"";
+        ctx.Response.Headers["WWW-Authenticate"] = $"PCA realm=\"{Escape(_options.Realm)}\", error=\"{error}\"";
         ctx.Response.ContentType = "application/json; charset=utf-8";
         var payload = JsonSerializer.Serialize(new Dictionary<string, string>
         {

@@ -1,0 +1,179 @@
+name: Mutation
+
+# Mutation testing of the verifier (AtlasPca/) with Stryker.NET (AtlasPca.Corpus.Tests/stryker-config.json: mutation level
+# Complete, oracle = the corpus test project), split into 12 shards over every .cs file of AtlasPca/: Pca.cs in 3 line spans
+# cut at member declarations, the other 17 files grouped by size (the plan, the per-member directive fencing and the check
+# that the plan lists every file are in scripts/stryker-spans.py). Each shard counts and lists only its IN-SCOPE mutants
+# (Stryker compiles, and reports CompileError for, the mutants of every file in every shard), and every in-scope
+# CompileError is then built and tested ALONE (scripts/stryker-isolate.py): Stryker rolls back whole groups of mutants
+# around one that breaks the build, so a compilable mutant can hide behind it untested. The merge job checks the survivors
+# (Survived + NoCoverage) against the equivalent-mutant ledger (flagship tools/pca-audit/native-check-equivalents.mjs): it
+# passes when every survivor is a ledgered equivalent and no ledger entry is stale. Runs on demand and on ci/** branches
+# (the release-candidate check), never on main pushes.
+#
+# TARGETED mode (the default whenever a baseline exists): every shard uploads stryker-baseline-<k> (its sources, scope and
+# every in-scope mutant with its status) and the next run starts from it. Stryker mutates ONLY the members that hold a line
+# changed since the baseline; every other baseline mutant is carried forward: Killed / Timeout / tested CompileError keep
+# their result, Survived / NoCoverage / untested CompileError are re-tested one by one against the current tests
+# (stryker-isolate.py). So each shard still reports its COMPLETE mutant set and the merge checks the ledger over the full
+# picture. Baseline = the input `baseline_run`, else the newest earlier run of this workflow on the same branch that
+# uploaded the shard's baseline; none (or `full: true`) = a full run, which seeds the baseline for the next one.
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_run:
+        description: 'run id whose stryker-baseline-<k> artifacts seed a targeted run (default: newest earlier run on this branch)'
+        required: false
+        default: ''
+      full:
+        description: 'ignore any baseline: mutate everything'
+        type: boolean
+        default: false
+  push:
+    branches: ['ci/**']
+
+permissions:
+  contents: read
+  actions: read   # download the baseline run's stryker-baseline artifacts
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CRATE: dotnet-pca
+  SHARDS: '12'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  shard:
+    name: shard ${{ matrix.shard }}/12
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Flagship tooling + source layout (+ libatlas_less -> ATLAS_PCA_LIBLESS, so the LESS branches are tested)
+        env:
+          LESS: '1'
+        run: .github/scripts/mutation-layout.sh "$CRATE"
+      - name: Baseline (targeted mode)
+        if: ${{ !inputs.full }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE: ${{ inputs.baseline_run }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/baseline-in"
+          ids="$BASELINE"
+          if [ -z "$ids" ]; then
+            ids="$(gh run list -R "$GITHUB_REPOSITORY" --workflow mutation.yml --branch "$GITHUB_REF_NAME" --limit 20 \
+                     --json databaseId -q '.[].databaseId' | grep -vx "$GITHUB_RUN_ID" || true)"
+          fi
+          for id in $ids; do
+            if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "stryker-baseline-$SHARD" -D "$RUNNER_TEMP/baseline-in" 2>/dev/null \
+               && [ -s "$RUNNER_TEMP/baseline-in/stryker-baseline.json" ]; then
+              echo "STRYKER_BASELINE=$RUNNER_TEMP/baseline-in/stryker-baseline.json" >> "$GITHUB_ENV"
+              echo "targeted: shard $SHARD seeded from run $id"; exit 0
+            fi
+          done
+          echo "::notice::shard $SHARD: no baseline found, full run (seeds the baseline for the next run)"
+      - name: Mutate
+        working-directory: ${{ env.MONO }}/sdks/dotnet-pca/AtlasPca.Corpus.Tests
+        run: |
+          # pinned: the version the ledger was built with. Its project analysis cannot parse the compiler command line of
+          # the newer SDKs preinstalled on the runner, so this copy pins the .NET 8 SDK (global.json, CI copy only).
+          dotnet tool install -g dotnet-stryker --version 4.8.1
+          SDK8="$(dotnet --list-sdks | awk '/^8\./ { v = $1 } END { print v }')"
+          [ -n "$SDK8" ] || { echo "::error::no .NET 8 SDK"; exit 1; }
+          (cd .. && dotnet new globaljson --sdk-version "$SDK8" --roll-forward disable --force >/dev/null)
+          dotnet --version
+          dotnet test -c Release > "$RUNNER_TEMP/baseline.log" 2>&1 || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the oracle fails on the unmutated source"; exit 1; }
+          # a mutant that allocates without bound must die alone (killed), not exhaust the runner: 3 GiB GC heap per test
+          # host, set in the test project's runtimeconfig (CI copy only). Not as a DOTNET_GCHeapHardLimit environment
+          # variable: that also caps Stryker's in-process compilation, and every Pca.cs mutant then "caused compile errors".
+          python3 - <<'PY'
+          s = open("AtlasPca.Corpus.Tests.csproj").read()
+          cap = '<ItemGroup><RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="3221225472" /></ItemGroup>'
+          assert "</Project>" in s
+          open("AtlasPca.Corpus.Tests.csproj", "w").write(s.replace("</Project>", cap + "\n</Project>"))
+          PY
+          T=()
+          [ -n "${STRYKER_BASELINE:-}" ] && T=(--baseline "$STRYKER_BASELINE" --carry "$RUNNER_TEMP/carried.json")
+          python3 "$GITHUB_WORKSPACE/.github/scripts/stryker-spans.py" ${{ matrix.shard }} "$SHARDS" ../AtlasPca \
+            --scope "$RUNNER_TEMP/scope.json" "${T[@]}" > "$RUNNER_TEMP/globs.txt"
+          M=()
+          while read -r g; do M+=(--mutate "$g"); done < "$RUNNER_TEMP/globs.txt"
+          if [ "${#M[@]}" -eq 0 ]; then
+            [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no --mutate glob for this shard"; exit 1; }
+            echo "targeted: no source line of this shard changed since the baseline, Stryker skipped"
+            exit 0
+          fi
+          echo "mutate: ${M[*]}"
+          dotnet stryker --config-file stryker-config.json --concurrency 4 "${M[@]}" 2>&1 | grep -vE '^\s*$' | tail -30
+      - name: Report (+ every in-scope CompileError and every carried survivor tested alone)
+        run: |
+          S="$GITHUB_WORKSPACE/.github/scripts"; D="$MONO/sdks/dotnet-pca"
+          REP="$(ls -d "$D"/AtlasPca.Corpus.Tests/StrykerOutput/*/reports/mutation-report.json 2>/dev/null | tail -1 || true)"
+          [ -n "$REP" ] || [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no Stryker report"; exit 1; }
+          A=(--scope "$RUNNER_TEMP/scope.json" --all "$RUNNER_TEMP/all.json" --retest "$RUNNER_TEMP/retest.json")
+          [ -n "$REP" ] && A+=(--report "$REP")
+          [ -f "$RUNNER_TEMP/carried.json" ] && A+=(--carried "$RUNNER_TEMP/carried.json")
+          python3 "$S/stryker-report.py" collect "${A[@]}"
+          # the isolated builds need the unfenced sources (the fenced copy has the shard's directive lines)
+          cp "$GITHUB_WORKSPACE"/AtlasPca/*.cs "$D/AtlasPca/"
+          if [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/retest.json")" -gt 0 ]; then
+            python3 "$S/stryker-isolate.py" --src "$D" --mutants "$RUNNER_TEMP/retest.json" --out "$RUNNER_TEMP/isolated.json" \
+              --jobs 4 --stop-on-fail > "$RUNNER_TEMP/isolate.log" 2>&1 || { tail -80 "$RUNNER_TEMP/isolate.log"; echo "::error::stryker-isolate.py failed"; exit 1; }
+            grep -vE '^\[[0-9]+/[0-9]+\] (Killed|CompileError) ' "$RUNNER_TEMP/isolate.log" | tail -80
+          fi
+          python3 "$S/stryker-report.py" finish --all "$RUNNER_TEMP/all.json" --isolated "$RUNNER_TEMP/isolated.json" \
+            --sources "$GITHUB_WORKSPACE/AtlasPca" --scope "$RUNNER_TEMP/scope.json" --counts counts.json \
+            --survivors survivors.json --baseline stryker-baseline.json
+          node .github/scripts/mutation-shard-report.mjs --crate="$CRATE" --shard=${{ matrix.shard }} --of="$SHARDS" --tool=stryker-net \
+            --counts=counts.json --survivors=survivors.json --out=shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stryker-baseline-${{ matrix.shard }}
+          path: stryker-baseline.json
+          retention-days: 30
+
+  merge:
+    needs: shard
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Flagship checker + ledger
+        run: .github/scripts/mutation-layout.sh "$CRATE"
+      - uses: actions/download-artifact@v4
+        with:
+          path: reports
+      - name: Merge shards and check the ledger
+        run: >
+          node .github/scripts/mutation-merge.mjs --crate="$CRATE" --shards="$SHARDS" --reports=reports
+          --checker="$MONO/tools/pca-audit" --src="$GITHUB_WORKSPACE"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: survivors-merged
+          path: reports/survivors-merged.json
+          if-no-files-found: ignore

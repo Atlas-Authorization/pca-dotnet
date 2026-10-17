@@ -3,5 +3,5 @@
   <Project Path="AtlasPca.AspNetCore/AtlasPca.AspNetCore.csproj" />
   <Project Path="AtlasPca.Corpus.Tests/AtlasPca.Corpus.Tests.csproj" />
   <Project Path="AtlasPca/AtlasPca.csproj" />
-  <Project Path="Conformance/Conformance.csproj" />
+  <Project Path="ConformanceRunner/ConformanceRunner.csproj" />
 </Solution>

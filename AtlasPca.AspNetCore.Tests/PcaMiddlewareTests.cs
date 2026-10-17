@@ -250,7 +250,7 @@ public class PcaMiddlewareTests
             var ctx = NewContext();
             ctx.Request.Headers["PCA-Action"] = input;
             await mw.InvokeAsync(ctx);
-            var challenge = ctx.Response.Headers["WWW-Authenticate"].ToString();
+            var challenge = ReadBody(ctx);
             bool refusedAsB64 = ctx.Response.StatusCode == StatusCodes.Status401Unauthorized && challenge.Contains("is not canonical base64url");
             Assert.False(nextRan, (string)e["name"]!);
             Assert.True((bool)e["valid"]! ? !refusedAsB64 : refusedAsB64, $"{e["name"]}: {ctx.Response.StatusCode} {challenge}");
@@ -274,7 +274,7 @@ public class PcaMiddlewareTests
         ctx.Request.Headers["PCA-Action"] = Pca.B64u(bytes.ToArray());
         await mw.InvokeAsync(ctx);
         Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
-        Assert.Contains("is not canonical base64url", ctx.Response.Headers["WWW-Authenticate"].ToString());
+        Assert.Contains("is not canonical base64url", ReadBody(ctx));
     }
 
     [Theory]
@@ -292,12 +292,67 @@ public class PcaMiddlewareTests
         await mw.InvokeAsync(ctx);
         Assert.False(nextRan);
         Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
-        Assert.Contains("is not canonical base64url", ctx.Response.Headers["WWW-Authenticate"].ToString());
+        Assert.Contains("is not canonical base64url", ReadBody(ctx));
+    }
+
+    // 0.4.2 audit: the denial reason (request-derived text) never reaches the WWW-Authenticate header; only realm + code.
+    [Fact]
+    public async Task Challenge_CarriesNoDescription()
+    {
+        var f = LoadValid();
+        var mw = new PcaMiddleware(_ => Task.CompletedTask, OptionsFor(f, audienceOverride: "rs-not-this-one"));
+        var ctx = NewContext();
+        ctx.Request.Headers["PCA-Action"] = HeaderFor(f.Json);
+        await mw.InvokeAsync(ctx);
+        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        Assert.Equal("PCA realm=\"pca\", error=\"access_denied\"", ctx.Response.Headers["WWW-Authenticate"].ToString());
+        Assert.Contains("audience", ReadBody(ctx));
+    }
+
+    // 0.4.2 audit: a throwing grant resolver fails closed (403), never an unhandled exception (500).
+    [Fact]
+    public async Task ThrowingResolver_FailsClosed403()
+    {
+        var f = LoadValid();
+        bool nextRan = false;
+        var options = OptionsFor(f, resolverOverride: _ => throw new System.InvalidOperationException("db down"));
+        var mw = new PcaMiddleware(_ => { nextRan = true; return Task.CompletedTask; }, options);
+        var ctx = NewContext();
+        ctx.Request.Headers["PCA-Action"] = HeaderFor(f.Json);
+        await mw.InvokeAsync(ctx);
+        Assert.False(nextRan);
+        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        Assert.Contains("grant resolution failed", ReadBody(ctx));
+    }
+
+    // 0.4.2 audit: invalid UTF-8 in the body is REJECTED (strict decoder, as the header path), never replaced by U+FFFD.
+    [Fact]
+    public async Task Body_InvalidUtf8_IsRefused401()
+    {
+        var f = LoadValid();
+        string? seen = null;
+        var options = OptionsFor(f, resolverOverride: r => { seen = r; return Task.FromResult<Dictionary<string, object?>?>(null); });
+        var mw = new PcaMiddleware(_ => Task.CompletedTask, options);
+        var ctx = NewContext();
+        var bytes = Encoding.UTF8.GetBytes("{\"pcactn\":{\"grant_ref\":\"__\"}}");
+        bytes[24] = 0xFF; bytes[25] = 0xFE;
+        ctx.Request.Body = new MemoryStream(bytes);
+        ctx.Request.ContentType = "application/json";
+        await mw.InvokeAsync(ctx);
+        Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
+        Assert.Contains("not valid UTF-8", ReadBody(ctx));
+        Assert.Null(seen);
     }
 }
 
 public class PcaMiddlewareDeepNestingTests
 {
+    static string ReadBodyOf(HttpContext ctx)
+    {
+        ctx.Response.Body.Position = 0;
+        return new StreamReader(ctx.Response.Body).ReadToEnd();
+    }
+
     // PoC: an attacker POSTs a deeply nested body. The envelope parse must reject it BEFORE recursing; run on a tiny stack so a
     // regression (unbounded or 4096-deep recursion) kills the test host instead of passing by luck on an 8 MB stack.
     [Fact]
@@ -336,6 +391,6 @@ public class PcaMiddlewareDeepNestingTests
         var mw = new PcaMiddleware(_ => Task.CompletedTask, new PcaOptions { Audience = "a", Clock = () => 0, GrantResolver = _ => Task.FromResult<Dictionary<string, object?>?>(null) });
         await mw.InvokeAsync(ctx);
         Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
-        Assert.Contains("error_description=\"" + expected, ctx.Response.Headers["WWW-Authenticate"].ToString());
+        Assert.Contains("\"error_description\":\"" + expected, ReadBodyOf(ctx));
     }
 }

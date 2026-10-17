@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Http;
 
 namespace AtlasPca.AspNetCore;
 
@@ -30,6 +31,20 @@ public sealed class PcaOptions
 
     /// <summary>The realm advertised in the <c>WWW-Authenticate</c> challenge.</summary>
     public string Realm { get; set; } = "pca";
+
+    /// <summary>
+    /// Optional Intent Layer M2 policy (require a bound <c>intent</c>, fidelity floor, residual-risk ceiling). Null (the
+    /// default) = no policy: the <c>intent</c> check runs only for a PCActn that carries <c>intent</c>.
+    /// </summary>
+    public IntentPolicy? IntentPolicy { get; set; }
+
+    /// <summary>
+    /// Optional Intent Layer v2 verifier state per request (rules 13-18: plaintext params, accepted schemas, the session root and
+    /// grants, revocation evidence, layers, accumulator state, W-B artifacts and policy), given the request and the parsed
+    /// PCActn. Null (the default) or a null result = no v2 state: the v2 checks run only for a PCActn carrying
+    /// <c>intent_session</c> (and then fail closed). A resolver that throws denies the request (403 <c>intent_v2_context_error</c>).
+    /// </summary>
+    public Func<HttpContext, Dictionary<string, object?>, Task<IntentV2Context?>>? IntentV2 { get; set; }
 
     public void Validate()
     {
