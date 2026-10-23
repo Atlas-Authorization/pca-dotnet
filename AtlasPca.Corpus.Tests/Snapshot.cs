@@ -59,9 +59,11 @@ public static class Snapshot
         var aud = (string)ctx["aud"]!;
         var grant = (Dictionary<string, object?>)v["grant"]!;
         List<string>? allowed = ctx.TryGetValue("allowed_suites", out var a) && a is List<object?> l ? l.Select(z => (string)z!).ToList() : null;
+        var ip = ctx.GetValueOrDefault("intent_policy_json") is string ipj ? IntentPolicy.FromJsonText(ipj) : IntentPolicy.FromJson(ctx.GetValueOrDefault("intent_policy"));
+        var v2 = ctx.ContainsKey("intent_v2") ? IntentV2Context.FromJson(ctx["intent_v2"]) : null;
         return v.ContainsKey("pcactn_json")
-            ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed)
-            : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed);
+            ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed, ip, v2)
+            : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed, ip, v2);
     }
 
     static Dictionary<string, object?>? core, adv;
@@ -119,7 +121,10 @@ public static class Snapshot
                     var grant = (Dictionary<string, object?>)Pca.ParseJson(c.GetProperty("grant").GetString()!)!;
                     List<string>? allowed = null;
                     if (c.TryGetProperty("allowed_suites", out var al) && al.ValueKind == JsonValueKind.Array) allowed = al.EnumerateArray().Select(x => x.GetString()!).ToList();
-                    return Fmt(Pca.VerifyRaw(raw, grant, c.GetProperty("now").GetInt64(), c.GetProperty("aud").GetString()!, allowed));
+                    var ip = c.TryGetProperty("intent_policy_json", out var ipjEl) && ipjEl.ValueKind == JsonValueKind.String ? IntentPolicy.FromJsonText(ipjEl.GetString()!)
+                        : c.TryGetProperty("intent_policy", out var ipEl) ? IntentPolicy.FromJson(Pca.ParseJson(ipEl.GetRawText())) : null;
+                    var v2 = c.TryGetProperty("intent_v2", out var v2El) ? IntentV2Context.FromJson(Pca.ParseJson(v2El.GetRawText())) : null;
+                    return Fmt(Pca.VerifyRaw(raw, grant, c.GetProperty("now").GetInt64(), c.GetProperty("aud").GetString()!, allowed, ip, v2));
                 });
             }
             else val = ParseOutcome(raw, false) + "|len=" + ParseOutcome(raw, true);
