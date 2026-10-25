@@ -10,7 +10,7 @@ namespace AtlasPca.Corpus.Tests;
 public class CorpusTests
 {
     const int Chunks = 16;
-    static readonly HashSet<string> Supported = new() { "ed25519", "ml-dsa-65", "hybrid-ed25519-ml-dsa-65" };
+    static readonly HashSet<string> Supported = new(Pq.SupportedSuites()); // the capability manifest (SUITES.md)
     static readonly HashSet<string> Registered = new() { "ed25519", "ml-dsa-65", "ml-dsa-87", "hybrid-ed25519-ml-dsa-65", "hybrid-ed25519-ml-dsa-87",
         "hybrid-nested-ed25519-ml-dsa-65", "slh-dsa-sha2-128f", "slh-dsa-sha2-256s", "hybrid-ed25519-slh-dsa-sha2-128f", "hybrid-ed25519-slh-dsa-sha2-256s" };
 
@@ -67,14 +67,23 @@ public class CorpusTests
             var aud = (string)ctx["aud"]!;
             var grant = (Dictionary<string, object?>)v["grant"]!;
             List<string>? allowed = ctx.TryGetValue("allowed_suites", out var asObj) && asObj is List<object?> asl ? asl.Select(z => (string)z!).ToList() : null;
+            var intentPolicy = ctx.GetValueOrDefault("intent_policy_json") is string ipj ? IntentPolicy.FromJsonText(ipj) : IntentPolicy.FromJson(ctx.GetValueOrDefault("intent_policy"));
             Verdict got;
             try
             {
+                var intentV2 = ctx.ContainsKey("intent_v2") ? IntentV2Context.FromJson(ctx["intent_v2"]) : null;
                 got = v.ContainsKey("pcactn_json")
-                    ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed)
-                    : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed);
+                    ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed, intentPolicy, intentV2)
+                    : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed, intentPolicy, intentV2);
             }
             catch (Exception e) { Assert.Fail(name + " threw " + e.GetType().Name); return; }
+            // Intent Layer v2: a vector whose artifacts need a suite this SDK lacks must FAIL closed with unsupported_suite
+            if (IntentPrimitives.MissingRequiredSuite(v.GetValueOrDefault("requires_suite")) is string missing)
+            {
+                Assert.True(!got.Allow && got.Reason.Contains("unsupported_suite"), $"{name}: requires_suite {missing} must fail with unsupported_suite ({got.Reason})");
+                continue;
+            }
+            if (exp.GetValueOrDefault("reason_contains") is string rcon) Assert.True(got.Reason.Contains(rcon), $"{name}: reason '{got.Reason}' does not contain {rcon}");
             Assert.True(got.Allow == (bool)exp["allow"]!, $"{name} allow={got.Allow} ({got.Reason})");
             Assert.True(got.Checks.Count == expChecks.Count, $"{name} check count");
             foreach (var (key, w) in expChecks)
@@ -119,6 +128,25 @@ public class CorpusTests
 
     [Fact] public void CorePrimitives() => BigStack.Run(() => RunPrimitives((Dictionary<string, object?>)Core.Value["primitives"]!));
     [Fact] public void AdversarialPrimitives() => BigStack.Run(() => RunPrimitives((Dictionary<string, object?>)Adv.Value["primitives"]!));
+
+    /// <summary>Intent Layer v2 primitives (rules 13 step 7, 14, 16, 17, 18, W-B activity), compared exactly as the README says.</summary>
+    [Fact]
+    public void IntentV2Primitives()
+    {
+        var prim = (Dictionary<string, object?>)Core.Value["primitives"]!;
+        var bad = new List<string>();
+        foreach (var kind in IntentPrimitives.Kinds)
+        {
+            if (prim.GetValueOrDefault(kind) is not List<object?> entries) continue;
+            foreach (var x in entries)
+            {
+                var e = (Dictionary<string, object?>)x!;
+                var why = IntentPrimitives.Mismatch(kind, e);
+                if (why != null) bad.Add($"{kind} {e["name"]}: {why}");
+            }
+        }
+        Assert.True(bad.Count == 0, string.Join("\n", bad));
+    }
 
     [Fact]
     public void MerkleParamsSharesArtifacts()

@@ -26,10 +26,11 @@ if (!(doc["format"] is Num f && f.Raw == "2")) { Console.WriteLine("vectors.json
 // The other 7 registered suites (ml-dsa-87, slh-dsa-sha2-128f/256s, their hybrids, and the SUF-CMA nested
 // hybrid) are NOT wired in .NET, so any vector needing a real signature verdict under them is SKIPPED
 // explicitly, per-suite — never silently passed.
-var supportedSuites = new HashSet<string> { "ed25519", "ml-dsa-65", "hybrid-ed25519-ml-dsa-65" };
-// Every registered suite in the corpus: a vector whose `requires` names one of these that .NET does not implement is skipped.
-var registeredSuites = new HashSet<string> { "ed25519", "ml-dsa-65", "ml-dsa-87", "hybrid-ed25519-ml-dsa-65", "hybrid-ed25519-ml-dsa-87",
-    "hybrid-nested-ed25519-ml-dsa-65", "slh-dsa-sha2-128f", "slh-dsa-sha2-256s", "hybrid-ed25519-slh-dsa-sha2-128f", "hybrid-ed25519-slh-dsa-sha2-256s" };
+// Suite capability (packages/pca/conformance/SUITES.md): the set actually used is the SDK's manifest
+// (Pq.SupportedSuites(): every ML-DSA / SLH-DSA suite since BouncyCastle provides them), and a vector needing a suite
+// outside it is not skipped silently: the verifier must refuse it with the distinct reason unsupported_suite.
+var supportedSuites = new HashSet<string>(Pq.SupportedSuites());
+var registeredSuites = new HashSet<string>(Pq.RegisteredSuites);
 
 static string AlgOf(Dictionary<string, object?> o) =>
     o.TryGetValue("alg", out var a) && a is string s ? s : "ed25519";
@@ -80,6 +81,12 @@ foreach (var x in vs)
     if (sus != null && !TerminalWireFalse(expChecks))
     {
         skippedBySuite[sus] = skippedBySuite.GetValueOrDefault(sus) + 1;
+        if (v.TryGetValue("pcactn", out var upc) && upc is Dictionary<string, object?>)
+        {
+            var uctx = (Dictionary<string, object?>)v["context"]!;
+            var ug = Pca.VerifyPcactnCore(upc, (Dictionary<string, object?>)v["grant"]!, long.Parse(((Num)uctx["now"]!).Raw), (string)uctx["aud"]!);
+            if (ug.Allow || !ug.Reason.Contains(Pq.UnsupportedSuite)) Bad($"{name}: suite {sus} is not implemented, so it must fail with unsupported_suite ({ug.Reason})");
+        }
         continue;
     }
     total++;
@@ -88,9 +95,23 @@ foreach (var x in vs)
     var aud = (string)ctx["aud"]!;
     var grant = (Dictionary<string, object?>)v["grant"]!;
     List<string>? allowed = ctx.TryGetValue("allowed_suites", out var asObj) && asObj is List<object?> asl ? asl.Select(z => (string)z!).ToList() : null;
+    // Intent Layer M2: `intent-*` vectors may carry context.intent_policy (an object) or context.intent_policy_json
+    // (raw JSON text, parsed with this SDK's parser; it wins when both are present). Absent = no policy.
+    var intentPolicy = ctx.GetValueOrDefault("intent_policy_json") is string ipj ? IntentPolicy.FromJsonText(ipj) : IntentPolicy.FromJson(ctx.GetValueOrDefault("intent_policy"));
+    // Intent Layer v2: `schema-*` / `session-*` / `acc-*` / `layers-*` vectors carry the verifier state in context.intent_v2.
+    var intentV2 = ctx.ContainsKey("intent_v2") ? IntentV2Context.FromJson(ctx["intent_v2"]) : null;
     Verdict got = v.ContainsKey("pcactn_json")
-        ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed)
-        : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed);
+        ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed, intentPolicy, intentV2)
+        : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed, intentPolicy, intentV2);
+    // Intent Layer v2: a vector whose artifacts need a suite this SDK lacks must FAIL closed with unsupported_suite
+    var missingSuite = IntentPrimitives.MissingRequiredSuite(v.GetValueOrDefault("requires_suite"));
+    if (missingSuite != null)
+    {
+        if (got.Allow || !got.Reason.Contains("unsupported_suite")) Bad($"{name}: requires_suite {missingSuite} not implemented, so it must fail with unsupported_suite ({got.Reason})");
+        else Console.WriteLine("ok   " + name + " (unsupported_suite)");
+        continue;
+    }
+    if (exp.GetValueOrDefault("reason_contains") is string rcon && !got.Reason.Contains(rcon)) Bad($"{name}: reason '{got.Reason}' does not contain {rcon}");
     bool ok = got.Allow == (bool)exp["allow"]! && got.Checks.Count == expChecks.Count;
     foreach (var (k, w) in expChecks)
         if (!got.Checks.TryGetValue(k, out var g) || g != (bool)w!) ok = false;
@@ -148,6 +169,12 @@ foreach (var x in (List<object?>)prim["threshold_share"]!)
     var sname = (s.TryGetValue("name", out var n) ? n as string : null) ?? (string)s["role"]!;
     bool want = !s.TryGetValue("valid", out var vo) || vo is not bool vb || vb;
     bool got = Pca.VerifyThresholdShare(s);
+    // Suite capability: an entry whose `requires` suite this runtime lacks is not compared; it must be refused.
+    if (s.TryGetValue("requires", out var srq) && srq is string sreq && !supportedSuites.Contains(sreq))
+    {
+        if (got) Bad($"threshold_share {sname}: share under unsupported suite {sreq} verified (want fail closed)");
+        continue;
+    }
     if (got != want) Bad($"threshold_share {sname}: verified={got} want valid={want}");
     if (want) shareAccepted++; else shareRejected++;
     if (sname == "agent-bare-rejected" && !got) bareRejected = true;
@@ -290,6 +317,26 @@ foreach (var x in (List<object?>)prim["pca_header"]!)
 total++;
 if (headerRan < 27) Bad($"pca_header primitives shrank: {headerRan}");
 Console.WriteLine($"0.4.1: caveat_eval ran {caveatRan}; pca_header ran {headerRan}");
+
+// ================= Intent Layer v2 primitives (rules 13 step 7, 14, 16, 17, 18; reasons never compared) =================
+foreach (var kind in IntentPrimitives.Kinds)
+{
+    if (prim.GetValueOrDefault(kind) is not List<object?> entries) { Console.WriteLine($"{kind}: absent"); continue; }
+    int ran = 0;
+    foreach (var x in entries)
+    {
+        var e = (Dictionary<string, object?>)x!;
+        total++;
+        string? why;
+        try { why = IntentPrimitives.Mismatch(kind, e); }
+        catch (Exception ex) { why = "THREW " + ex.GetType().Name; }
+        if (why != null) Bad($"{kind} {e["name"]}: {why}");
+        ran++;
+    }
+    total++;
+    if (ran < 1) Bad($"{kind} primitives absent");
+    Console.WriteLine($"{kind}: ran {ran}");
+}
 
 // ================= report =================
 Console.WriteLine();

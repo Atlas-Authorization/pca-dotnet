@@ -108,6 +108,9 @@ public static class Caveats
                 return Fin(cv.GetValueOrDefault("max")) is double md && Fin(c.GetValueOrDefault("delegation_depth")) is double dd && dd <= md;
             case "budget_alloc":
                 return Fin(cv.GetValueOrDefault("limit")) is double bl && bl >= 0;
+            case "intent_session":
+                // Intent Layer v2 session binding (rule 13): no per-action constraint; satisfied iff well-formed.
+                return IntentSession.CaveatError(cv) == null;
             default:
                 return false;
         }
