@@ -11,8 +11,8 @@ namespace AtlasPca.AspNetCore;
 /// <summary>
 /// ASP.NET Core middleware for Proof-Carrying Authority. It reads a PCActn from the <c>PCA-Action</c> header
 /// (base64url -&gt; JSON -&gt; strict decode) or from a JSON body <c>{"pcactn": ...}</c>, resolves the root grant,
-/// and runs the existing offline verifier (<see cref="Pca.VerifyPcactnCore"/>: the eight checks, audience vs the
-/// signed <c>aud</c>, and the capability chain rooted at the grant).
+/// and by default runs the full <see cref="Pca.AuthorizeAsync"/> pipeline (operation binding, envelope predicates and caveats,
+/// revocation, replay). <see cref="PcaOptions.SignatureOnly"/> opts into the offline verifier alone (<see cref="Pca.VerifyPcactnCore"/>).
 ///
 /// On success it sets <c>HttpContext.Items["pca"]</c> to a <see cref="PcaAuthResult"/> and calls the next middleware.
 /// On failure it writes 401 (absent / undecodable / unknown grant) or 403 (a denying verdict) with a
@@ -42,6 +42,12 @@ public sealed class PcaMiddleware
         if (tree is not Dictionary<string, object?> p)
         {
             await ChallengeAsync(ctx, StatusCodes.Status401Unauthorized, "invalid_request", "PCActn must be a JSON object.");
+            return;
+        }
+
+        if (!_options.SignatureOnly)
+        {
+            await AuthorizeAsync(ctx, p, _options.Authorize ?? new PcaAuthorizeOptions());
             return;
         }
 
@@ -85,6 +91,44 @@ public sealed class PcaMiddleware
         }
 
         ctx.Items["pca"] = new PcaAuthResult(verdict, p);
+        await _next(ctx);
+    }
+
+    /// <summary>
+    /// The full pipeline (the default; <see cref="PcaOptions.Authorize"/>): map the request to its operation, then
+    /// <see cref="Pca.AuthorizeAsync"/>. Any denial (including a missing component or operation) stops the request here.
+    /// </summary>
+    async Task AuthorizeAsync(HttpContext ctx, Dictionary<string, object?> p, PcaAuthorizeOptions az)
+    {
+        Operation? op = null;
+        if (az.Operation != null)
+        {
+            try { op = await az.Operation(ctx); }
+            catch (Exception) { op = null; } // the host's mapping failed: no operation, which denies
+        }
+        var context = az.Context;
+        var v2 = _options.IntentV2;
+        var result = await Pca.AuthorizeAsync(p, new AuthorizeInput
+        {
+            Operation = op,
+            Audience = _options.Audience,
+            ResolveGrantAsync = r => _options.GrantResolver(r),
+            StateStore = az.StateStore,
+            IsRevoked = az.IsRevoked,
+            Now = _options.Clock(),
+            Plan = az.Plan,
+            Context = context == null ? null : pc => context(ctx, pc),
+            IntentPolicy = _options.IntentPolicy,
+            IntentV2ProviderAsync = v2 == null ? null : pc => v2(ctx, pc),
+            Require = az.Require,
+        });
+        if (!result.Allow)
+        {
+            await ChallengeAsync(ctx, result.Status, result.Status == StatusCodes.Status401Unauthorized ? "invalid_request" : "access_denied",
+                result.Reason ?? "denied");
+            return;
+        }
+        ctx.Items["pca"] = new PcaAuthResult(result.Verdict!, p) { Authorization = result };
         await _next(ctx);
     }
 

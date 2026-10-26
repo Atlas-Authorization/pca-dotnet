@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="AtlasPca.Corpus.Tests" />
+    <InternalsVisibleTo Include="AtlasPca.AspNetCore.Tests" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.1" />

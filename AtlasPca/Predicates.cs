@@ -366,4 +366,72 @@ public static class Predicates
     /// <summary>An action is allowed iff it matches AT LEAST ONE predicate. Default-deny: an empty or non-list set allows nothing.</summary>
     public static bool EvaluatePredicates(object? predicates, Dictionary<string, object?>? ctx) =>
         SafeRegex.WithBudget(() => predicates is List<object?> l && l.Count > 0 && l.Any(p => PredicateMatches(p, ctx)));
+
+    // ---- B6 (0.5): name the limit that was not met (TypeScript firstUnmetLimit / describeCondition / showValue) ----
+
+    static readonly Dictionary<string, string> OpText = new()
+    {
+        ["eq"] = "==", ["ne"] = "!=", ["lt"] = "<", ["lte"] = "<=", ["gt"] = ">", ["gte"] = ">=", ["in"] = "in", ["nin"] = "not in",
+        ["prefix"] = "starts with", ["like"] = "like", ["matches"] = "matches", ["is_a"] = "is a", ["member_of"] = "member of",
+    };
+    const int MaxShownString = 64, MaxShownItems = 8;
+
+    /// <summary>A scalar operand in a denial reason: only safe integers, booleans, null and plain short strings are spelled out.</summary>
+    internal static string ShowValue(object? v, int depth = 0)
+    {
+        if (v == null) return "null";
+        if (v is bool b) return b ? "true" : "false";
+        if (IntentJs.IsNumber(v)) return IntentJs.IsSafeInteger(v) ? IntentJs.Lng(v).ToString(System.Globalization.CultureInfo.InvariantCulture) : "<number>";
+        if (v is string s)
+            return s.Length <= MaxShownString && !s.Any(ch => ch < ' ' || ch == '"' || ch == '\\' || char.IsSurrogate(ch)) ? "\"" + s + "\"" : "\"...\"";
+        if (v is List<object?> l && depth == 0) return l.Count <= MaxShownItems ? "[" + string.Join(", ", l.Select(x => ShowValue(x, 1))) + "]" : "[...]";
+        return "<value>";
+    }
+
+    static bool IsGroup(Dictionary<string, object?> c) => c.ContainsKey("all_of") || c.ContainsKey("any_of") || c.ContainsKey("not");
+
+    /// <summary>The condition as the limit a reader recognises: <c>amount &lt;= 500</c>, <c>currency in ["usd", "eur"]</c>.</summary>
+    internal static string DescribeCondition(object? cond, int depth = 0)
+    {
+        if (cond is List<object?>) return "<field> <condition>"; // the reference treats an array as a leaf with no field or op
+        if (cond is not Dictionary<string, object?> c) return "<condition>";
+        if (IsGroup(c))
+        {
+            if (depth >= 2) return "(...)";
+            string Kids(object? xs) => string.Join("; ", ((List<object?>)xs!).Take(MaxShownItems).Select(x => DescribeCondition(x, depth + 1)));
+            if (c.TryGetValue("all_of", out var all) && all is List<object?>) return $"all of ({Kids(all)})";
+            if (c.TryGetValue("any_of", out var any) && any is List<object?>) return $"any of ({Kids(any)})";
+            if (c.TryGetValue("not", out var not)) return $"not ({DescribeCondition(not, depth + 1)})";
+            return "<condition>";
+        }
+        var f = IntentJs.Get(c, "field") is string fs ? fs : "<field>";
+        var name = f.StartsWith("action.params.", StringComparison.Ordinal) ? f.Substring("action.params.".Length) : f;
+        var op = IntentJs.Get(c, "op") as string;
+        if (op == "exists") return IntentJs.Get(c, "value") is false ? name + " absent" : name + " present";
+        if (op == null || !OpText.TryGetValue(op, out var text)) return name + " <condition>";
+        return $"{name} {text} " + (c.TryGetValue("ref", out var r) ? (r is string rs ? rs : "<ref>") : ShowValue(IntentJs.Get(c, "value")));
+    }
+
+    static object? NarrowestUnmet(object? c, Dictionary<string, object?>? ctx, int depth = 0)
+    {
+        if (depth < 4 && c is Dictionary<string, object?> m && IsGroup(m) && m.TryGetValue("all_of", out var all) && all is List<object?> xs)
+            foreach (var x in xs) if (!EvaluateCondition(x, ctx)) return NarrowestUnmet(x, ctx, depth + 1);
+        return c;
+    }
+
+    /// <summary>When a predicate's verb and resource are in scope but a <c>where</c> limit is not met, the narrowest unmet limit
+    /// described; null when no predicate is in scope (the plain "no predicate permits" wording stays).</summary>
+    public static string? FirstUnmetLimit(object? predicates, Dictionary<string, object?>? ctx) => SafeRegex.WithBudget<string?>(() =>
+    {
+        var a = ctx != null && ctx.TryGetValue("action", out var av) ? av as Dictionary<string, object?> : null;
+        if (a == null || IntentJs.Get(a, "verb") is not string verb || IntentJs.Get(a, "resource") is not string resource) return null;
+        if (predicates is not List<object?> l) return null;
+        foreach (var p in l)
+        {
+            if (p is not Dictionary<string, object?> pm || !VerbMatches(IntentJs.Get(pm, "verb"), verb) || !ResourceMatches(pm, resource)) continue;
+            if (IntentJs.Get(pm, "where") is not List<object?> wl) continue;
+            foreach (var c in wl) if (!EvaluateCondition(c, ctx)) return DescribeCondition(NarrowestUnmet(c, ctx));
+        }
+        return null;
+    });
 }

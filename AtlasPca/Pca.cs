@@ -174,7 +174,7 @@ public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm =
 public sealed class Verdict
 {
     public bool Allow;
-    /// <summary>All eight checks (plus <c>intent</c> after <c>counter</c> when evaluated, then the Intent Layer v2 checks when reported), or only { wire:false } when the wire form is rejected (terminal).</summary>
+    /// <summary>All eight checks (plus <c>intent</c> after <c>counter_format</c> when evaluated, then the Intent Layer v2 checks when reported), or only { wire:false } when the wire form is rejected (terminal).</summary>
     public Dictionary<string, bool> Checks = new();
     public string Reason = "";
 }
@@ -1411,7 +1411,7 @@ public static partial class Pca
 
     /// <summary>Verify RAW signed bytes: strict-parse (a parse failure or non-object is a `wire` failure), then verify.</summary>
     /// <remarks><paramref name="intentPolicy"/> (Intent Layer M2, optional): the <c>intent</c> check is reported after
-    /// <c>counter</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
+    /// <c>counter_format</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
     /// <remarks><paramref name="intentV2"/> (Intent Layer v2, optional): the verifier state of rules 13-18; the v2 checks are
     /// reported after <c>intent</c> exactly when <see cref="IntentV2"/> reports them.</remarks>
     public static Verdict VerifyRaw(string pcactnJson, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null,
@@ -1441,7 +1441,7 @@ public static partial class Pca
     }
 
     /// <remarks><paramref name="intentPolicy"/> (Intent Layer M2, optional): the <c>intent</c> check is reported after
-    /// <c>counter</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
+    /// <c>counter_format</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
     /// <remarks><paramref name="intentV2"/> (Intent Layer v2, optional): the verifier state of rules 13-18 (<see cref="IntentV2Context"/>).
     /// A PCActn without <c>intent_session</c> under a context without an active v2 policy verifies exactly as before.</remarks>
     public static Verdict VerifyPcactnCore(object? pcactn, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null,
@@ -1470,8 +1470,8 @@ public static partial class Pca
         }
         var p = (Dictionary<string, object?>)pcactn!;
         v.Checks["wire"] = true;
-        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" }) v.Checks[k] = false;
-        // Intent Layer M2: `intent` is reported (after counter) iff the PCActn carries intent or the policy is active.
+        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" }) v.Checks[k] = false;
+        // Intent Layer M2: `intent` is reported (after counter_format) iff the PCActn carries intent or the policy is active.
         bool intentPresent = p.ContainsKey("intent");
         if (intentPresent || intentPolicy is { IsActive: true }) v.Checks["intent"] = false;
         bool failed = false;
@@ -1532,8 +1532,8 @@ public static partial class Pca
                 PinnedPq.Resolve(Get(leafCapObj, "holder") as string, Get(p, "pq_pk"), holderPq: Get(leafCapObj, "holder_pq")))) v.Checks["leaf_signature"] = true;
             else Fail("leaf_signature", "signature does not verify under the leaf holder key");
 
-            if (counter >= 0) v.Checks["counter"] = true;
-            else Fail("counter", "missing or not a non-negative safe integer");
+            if (counter >= 0) v.Checks["counter_format"] = true;
+            else Fail("counter_format", "missing or not a non-negative safe integer");
 
             var intentWhy = DecideIntent(Get(p, "intent"), intentPresent, grant, intentPolicy, Get(Get(p, "intent_session") as Dictionary<string, object?>, "session") as string,
                 Get(Get(p, "intent_session") as Dictionary<string, object?>, "map_form"));
