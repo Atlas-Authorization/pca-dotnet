@@ -1,7 +1,9 @@
 name: CI
 
 # Build the solution, run the xUnit suites (incl. the corpus tests) and the ConformanceRunner over the shared corpus
-# (conformance/vectors.json).
+# (conformance/vectors.json). The 0.5 vector suites (decision / escalation, model rules, passport, attestation evidence, intent-state,
+# ledger / optimistic / mesh, goal) each run as their own named step below, after asserting that their vector file is present (a missing
+# vector file FAILS, it is never skipped).
 on:
   push:
     branches: [main, 'ci/**']
@@ -51,3 +53,27 @@ jobs:
       - name: Conformance corpus
         working-directory: ${{ env.PCA_MONO_SDK }}
         run: dotnet run --project ConformanceRunner -c Release --no-build
+      - name: Vector files present (a missing file fails)
+        shell: bash
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          c=../../packages/pca/conformance
+          for f in decision-vectors.json model-rules-vectors.json passport-vectors.json attestation-evidence-vectors.json intent-state-vectors.json ledger-vectors.json optimistic-vectors.json mesh-vectors.json keys.json; do
+            test -s "$c/$f" || { echo "::error::conformance/$f is missing"; exit 1; }
+          done
+          test -s ../../packages/pca-conformance/vectors/goal/index.json || { echo "::error::goal vectors are missing"; exit 1; }
+          grep -q '"passport_hardware_vectors"' "$c/passport-vectors.json" || { echo "::error::passport-vectors.json has no passport_hardware_vectors table"; exit 1; }
+      - name: Decision, escalation answers and model rules (rules 20-21 through Authorize)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~DecisionVectorTests|FullyQualifiedName~ModelRulesVectorTests"
+          dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~EscalationTests"
+      - name: Signed passport (every suite, hardware seam)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~PassportVectorTests"
+      - name: Hardware attestation verifiers (evidence vectors, strict DER/X.509, fail-closed tables)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~AttestationVectorTests|FullyQualifiedName~AttestationUnitTests|FullyQualifiedName~PassportVectorTests.PassportHardwareVectors"
+      - name: Track 3 vectors (intent-state, ledger, optimistic, mesh) and goal vectors
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~IntentStateVectorTests|FullyQualifiedName~ExtVectorTests|FullyQualifiedName~GoalVectorTests"

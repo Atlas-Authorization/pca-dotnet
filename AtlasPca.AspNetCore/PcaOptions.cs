@@ -46,14 +46,73 @@ public sealed class PcaOptions
     /// </summary>
     public Func<HttpContext, Dictionary<string, object?>, Task<IntentV2Context?>>? IntentV2 { get; set; }
 
+    /// <summary>
+    /// The components of the full <see cref="Pca.AuthorizeAsync"/> pipeline, which is what the middleware runs by default (0.5):
+    /// the proof must be for exactly the operation this request executes, the grant's envelope predicates and caveats must hold,
+    /// the grant must not be revoked, and the counter is consumed in the replay store. Left null (and not
+    /// <see cref="SignatureOnly"/>) the middleware runs with an empty option set and refuses every request with 403
+    /// <c>authorize_config</c> naming the missing components. Never both with <see cref="SignatureOnly"/>.
+    /// </summary>
+    public PcaAuthorizeOptions? Authorize { get; set; }
+
+    /// <summary>
+    /// Explicit opt-in to signature-only verification: only the core verifier runs (signature, chain, audience, validity,
+    /// counter format). It does NOT check the operation, the envelope predicates and caveats, revocation or replay. Mutually
+    /// exclusive with <see cref="Authorize"/> (the middleware constructor throws).
+    /// </summary>
+    public bool SignatureOnly { get; set; }
+
     public void Validate()
     {
         if (string.IsNullOrEmpty(Audience)) throw new InvalidOperationException("PcaOptions.Audience must be set.");
         if (GrantResolver is null) throw new InvalidOperationException("PcaOptions.GrantResolver must be set.");
         if (Clock is null) throw new InvalidOperationException("PcaOptions.Clock must be set.");
         if (string.IsNullOrEmpty(HeaderName)) throw new InvalidOperationException("PcaOptions.HeaderName must be set.");
+        if (SignatureOnly && Authorize != null) throw new InvalidOperationException("PcaOptions: SignatureOnly and Authorize are mutually exclusive (signature-only skips every authorize check).");
+        if (Authorize is { EscalationPrincipals.Count: > 0, StateStore: { } store } && store is not ILastStore)
+            throw new InvalidOperationException("PcaOptions: Authorize.EscalationPrincipals needs a StateStore that implements ILastStore (an escalation answer is bound to the holder's history head).");
     }
 }
 
 /// <summary>What the middleware stores at <c>HttpContext.Items["pca"]</c> on success: the allowing verdict and the verified PCActn.</summary>
-public sealed record PcaAuthResult(Verdict Verdict, Dictionary<string, object?> Pcactn);
+public sealed record PcaAuthResult(Verdict Verdict, Dictionary<string, object?> Pcactn)
+{
+    /// <summary>The full allowing decision (checks, bound operation). Null with <see cref="PcaOptions.SignatureOnly"/>.</summary>
+    public AuthorizeResult? Authorization { get; init; }
+
+    /// <summary>The operation the proof was bound to and consumed for. Null with <see cref="PcaOptions.SignatureOnly"/>.</summary>
+    public AuthorizedOperation? Operation => Authorization?.Operation;
+}
+
+/// <summary>
+/// The <see cref="PcaOptions.Authorize"/> option: the components <see cref="Pca.AuthorizeAsync"/> needs on top of the
+/// audience, grant resolver, clock and Intent Layer options of <see cref="PcaOptions"/>. A missing <see cref="StateStore"/>,
+/// <see cref="IsRevoked"/> or <see cref="Operation"/> mapping denies every request (403, fail closed).
+/// </summary>
+public sealed class PcaAuthorizeOptions
+{
+    /// <summary>The replay store (atomic claim per counter stream). Required.</summary>
+    public IStateStore? StateStore { get; set; }
+
+    /// <summary><c>(pcactn, grant) -&gt; revoked?</c>; only <c>false</c> passes. Required.</summary>
+    public Func<Dictionary<string, object?>, Dictionary<string, object?>, bool?>? IsRevoked { get; set; }
+
+    /// <summary><c>"single-step"</c> (the default): accept a one-node plan whose node is exactly this operation. Set null to
+    /// require a principal-authorized plan from <see cref="Context"/>.</summary>
+    public string? Plan { get; set; } = "single-step";
+
+    /// <summary>Optional per-request context (<c>plan</c>, <c>plan_authorized</c>, <c>subject</c>, <c>env</c>,
+    /// <c>blast_radius</c>, <c>recent_action_times</c>, <c>reversibility_class</c>). A throwing callback denies.</summary>
+    public Func<HttpContext, Dictionary<string, object?>, Dictionary<string, object?>?>? Context { get; set; }
+
+    /// <summary>Extra check names that must pass.</summary>
+    public IReadOnlyList<string>? Require { get; set; }
+
+    /// <summary>Pins the keys whose escalation answers count (header <c>PCA-Escalation-Answer</c>: strict base64url JSON, or the JSON
+    /// body member <c>escalation_answer</c>). Empty: every escalate is refused (403, <c>decision</c> "escalate").</summary>
+    public IReadOnlyList<PinnedSigner>? EscalationPrincipals { get; set; }
+
+    /// <summary>The operation this request will execute, from the route and the parsed request (never from the PCActn).
+    /// Required. A null result or an exception denies (403).</summary>
+    public Func<HttpContext, Task<Operation?>>? Operation { get; set; }
+}

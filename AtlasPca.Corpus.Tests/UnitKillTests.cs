@@ -548,7 +548,7 @@ public class UnitKillTests
         var raw = (string)Vec("valid-raw-json-format-insensitive")["pcactn_json"]!;
         var g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD);
         Assert.True(g.Allow); Assert.Equal("", g.Reason);
-        Assert.Equal(new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" }, g.Checks.Keys.ToArray());
+        Assert.Equal(new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" }, g.Checks.Keys.ToArray());
         Assert.False(Pca.VerifyRaw(raw, ValidGrant(), NOW, "other").Allow);
         Assert.Equal("audience: aud does not match this resource server / instance", Pca.VerifyRaw(raw, ValidGrant(), NOW, "other").Reason);
         Assert.Equal("wire: PCActn is not an object", Pca.VerifyPcactnCore("x", ValidGrant(), NOW, AUD).Reason);
@@ -567,8 +567,8 @@ public class UnitKillTests
         Assert.Equal("validity: the PCActn has expired", Pca.VerifyPcactnCore(ok, ValidGrant(), iat + 600001, AUD).Reason);
         Assert.True(Pca.VerifyPcactnCore(ok, ValidGrant(), iat + 600000, AUD).Checks["validity"]);
         g = Pca.VerifyPcactnCore(P(p => p["counter"] = N("-1")), ValidGrant(), NOW, AUD);
-        Assert.False(g.Checks["counter"]); Assert.Equal("leaf_signature: signature does not verify under the leaf holder key", g.Reason);
-        Assert.True(Pca.VerifyPcactnCore(P(p => p["counter"] = N("0")), ValidGrant(), NOW, AUD).Checks["counter"]);
+        Assert.False(g.Checks["counter_format"]); Assert.False(g.Checks.ContainsKey("counter")); Assert.Equal("leaf_signature: signature does not verify under the leaf holder key", g.Reason);
+        Assert.True(Pca.VerifyPcactnCore(P(p => p["counter"] = N("0")), ValidGrant(), NOW, AUD).Checks["counter_format"]);
         g = Pca.VerifyPcactnCore(P(p => p["cap_chain"] = new L()), ValidGrant(), NOW, AUD);
         Assert.Equal("chain: empty chain", g.Reason); Assert.False(g.Checks["chain"]); Assert.False(g.Checks["grant_ref_bound"]); Assert.False(g.Checks["leaf_signature"]);
         var first = Ls(Valid()["cap_chain"])[0];
@@ -579,7 +579,7 @@ public class UnitKillTests
         Assert.Equal("chain: chain root is not the grant", Pca.VerifyPcactnCore(Valid(), g2, NOW, AUD).Reason);
         var g4 = Clone(ValidGrant()); g4["weird"] = new object();
         g = Pca.VerifyPcactnCore(Valid(), g4, NOW, AUD);
-        Assert.False(g.Allow); Assert.StartsWith("malformed PCActn: ", g.Reason); Assert.True(g.Checks["wire"]); Assert.True(g.Checks["version"]); Assert.False(g.Checks["chain"]); Assert.False(g.Checks["counter"]);
+        Assert.False(g.Allow); Assert.StartsWith("malformed PCActn: ", g.Reason); Assert.True(g.Checks["wire"]); Assert.True(g.Checks["version"]); Assert.False(g.Checks["chain"]); Assert.False(g.Checks["counter_format"]);
         Assert.StartsWith("malformed PCActn: ", Pca.VerifyPcactnCore(P(p => p["ver"] = N("3")), g4, NOW, AUD).Reason);
         g = Pca.VerifyPcactnCore(P(p => p["grant_ref"] = B32.Replace('q', 'r')), ValidGrant(), NOW, AUD);
         Assert.False(g.Checks["grant_ref_bound"]); Assert.Equal("grant_ref_bound: grant_ref is not the id of the root capability in cap_chain", g.Reason);
@@ -775,7 +775,7 @@ public class UnitKillTests
 
     [Fact] public void IntentVerify()
     {
-        var baseKeys = new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" };
+        var baseKeys = new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" };
         var withIntent = baseKeys.Append("intent").ToArray();
         var raw = (string)Vec("valid-raw-json-format-insensitive")["pcactn_json"]!;
         var g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: false));
@@ -808,7 +808,7 @@ public class UnitKillTests
     const string INone = "this verifier requires an intent binding but the PCActn carries none";
     const string INoEnv = "the root grant carries no envelope goal commitment to bind the intent to";
     const string IOpen = "intent ref / map_digest / goal_salt do not open the root grant's goal commitment";
-    static readonly string[] BaseKeys = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" };
+    static readonly string[] BaseKeys = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" };
     static readonly string[] IntentKeys = BaseKeys.Append("intent").ToArray();
 
     static D SlotWith(string k, object? v) => IntentSlot().Also(i => i[k] = v);

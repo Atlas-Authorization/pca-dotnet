@@ -174,9 +174,16 @@ public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm =
 public sealed class Verdict
 {
     public bool Allow;
-    /// <summary>All eight checks (plus <c>intent</c> after <c>counter</c> when evaluated, then the Intent Layer v2 checks when reported), or only { wire:false } when the wire form is rejected (terminal).</summary>
+    /// <summary>All eight checks (plus <c>intent</c> after <c>counter_format</c> when evaluated, then the Intent Layer v2 checks when reported), or only { wire:false } when the wire form is rejected (terminal).</summary>
     public Dictionary<string, bool> Checks = new();
     public string Reason = "";
+    /// <summary>Every reason in order: the first failure (<see cref="Reason"/>), then one for EACH further failing intent-v2 check (the
+    /// escalate-class ones). <see cref="PcaDecision.DecisionOf(object?)"/> reads the whole list, so a multi-check escalation stays an
+    /// escalation. Empty when allowed, and on a wire failure (<see cref="Reason"/> only).</summary>
+    public List<string> Reasons = new();
+    /// <summary>Rule 21's compatibility mode is in effect (<c>model_polarity</c> "legacy" and a grant reads a model-derived path in where).
+    /// Authorize reports it as <see cref="AuthorizeResult.Degraded"/>["tighten"].</summary>
+    public bool LegacyModelPolarity;
 }
 
 public sealed class StrictJsonException : Exception
@@ -1411,7 +1418,7 @@ public static partial class Pca
 
     /// <summary>Verify RAW signed bytes: strict-parse (a parse failure or non-object is a `wire` failure), then verify.</summary>
     /// <remarks><paramref name="intentPolicy"/> (Intent Layer M2, optional): the <c>intent</c> check is reported after
-    /// <c>counter</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
+    /// <c>counter_format</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
     /// <remarks><paramref name="intentV2"/> (Intent Layer v2, optional): the verifier state of rules 13-18; the v2 checks are
     /// reported after <c>intent</c> exactly when <see cref="IntentV2"/> reports them.</remarks>
     public static Verdict VerifyRaw(string pcactnJson, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null,
@@ -1441,7 +1448,7 @@ public static partial class Pca
     }
 
     /// <remarks><paramref name="intentPolicy"/> (Intent Layer M2, optional): the <c>intent</c> check is reported after
-    /// <c>counter</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
+    /// <c>counter_format</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
     /// <remarks><paramref name="intentV2"/> (Intent Layer v2, optional): the verifier state of rules 13-18 (<see cref="IntentV2Context"/>).
     /// A PCActn without <c>intent_session</c> under a context without an active v2 policy verifies exactly as before.</remarks>
     public static Verdict VerifyPcactnCore(object? pcactn, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null,
@@ -1470,8 +1477,8 @@ public static partial class Pca
         }
         var p = (Dictionary<string, object?>)pcactn!;
         v.Checks["wire"] = true;
-        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" }) v.Checks[k] = false;
-        // Intent Layer M2: `intent` is reported (after counter) iff the PCActn carries intent or the policy is active.
+        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" }) v.Checks[k] = false;
+        // Intent Layer M2: `intent` is reported (after counter_format) iff the PCActn carries intent or the policy is active.
         bool intentPresent = p.ContainsKey("intent");
         if (intentPresent || intentPolicy is { IsActive: true }) v.Checks["intent"] = false;
         bool failed = false;
@@ -1532,8 +1539,8 @@ public static partial class Pca
                 PinnedPq.Resolve(Get(leafCapObj, "holder") as string, Get(p, "pq_pk"), holderPq: Get(leafCapObj, "holder_pq")))) v.Checks["leaf_signature"] = true;
             else Fail("leaf_signature", "signature does not verify under the leaf holder key");
 
-            if (counter >= 0) v.Checks["counter"] = true;
-            else Fail("counter", "missing or not a non-negative safe integer");
+            if (counter >= 0) v.Checks["counter_format"] = true;
+            else Fail("counter_format", "missing or not a non-negative safe integer");
 
             var intentWhy = DecideIntent(Get(p, "intent"), intentPresent, grant, intentPolicy, Get(Get(p, "intent_session") as Dictionary<string, object?>, "session") as string,
                 Get(Get(p, "intent_session") as Dictionary<string, object?>, "map_form"));
@@ -1547,8 +1554,10 @@ public static partial class Pca
             v.Allow = false;
             v.Reason = "malformed PCActn: " + ex.Message;
         }
-        // Intent Layer v2 (rules 13-18): reported in pipeline order exactly when IntentV2 reports them (total: never throws)
-        foreach (var c in IntentV2.Decide(p, grant, intentV2, now).Checks)
+        // Intent Layer v2 (rules 13-21): reported in pipeline order exactly when IntentV2 reports them (total: never throws)
+        var v2d = IntentV2.Decide(p, grant, intentV2, now);
+        v.LegacyModelPolarity = v2d.Legacy;
+        foreach (var c in v2d.Checks)
         {
             v.Checks[c.Name] = c.Ok;
             if (!c.Ok)
@@ -1557,6 +1566,7 @@ public static partial class Pca
                 if (v.Reason == "") v.Reason = c.Name + ": " + c.Reason;
             }
         }
+        if (!v.Allow) v.Reasons = PcaDecision.FoldV2Reasons(v.Reason.Length > 0 ? new[] { v.Reason } : Array.Empty<string>(), v2d.Checks.Select(c => new PcaDecision.V2CheckResult(c.Name, c.Ok, c.Reason)));
         return v;
     }
 }
