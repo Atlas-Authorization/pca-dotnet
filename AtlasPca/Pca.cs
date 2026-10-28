@@ -136,10 +136,13 @@ public sealed record Num(string Raw);
 /// <param name="Require">Require every PCActn to carry a bound <c>intent</c>.</param>
 /// <param name="MinFidelityPpm">Deny when the claimed <c>fidelity_ppm</c> is below this (null = unset).</param>
 /// <param name="MaxResidualRiskPpm">Deny when the claimed <c>residual_risk_ppm</c> is above this (null = unset).</param>
-public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm = null, double? MaxResidualRiskPpm = null)
+/// <param name="ApprovedGoal">Goal binding v3: the root grant must open to exactly this approved goal and compiled policy (a v1 / v2 grant does not). Setting it activates the policy.</param>
+/// <param name="ApprovedGoalMisconfigured">An <c>approved_goal</c> that was configured but is not the closed object <c>{goal_digest, policy_digest}</c> of strings (<see cref="FromJson"/> sets it); the policy is active and the check fails closed.</param>
+public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm = null, double? MaxResidualRiskPpm = null,
+    ApprovedGoalRef? ApprovedGoal = null, bool ApprovedGoalMisconfigured = false)
 {
     /// <summary>True iff the policy is active (the intent check runs even for a PCActn without the field).</summary>
-    public bool IsActive => Require || MinFidelityPpm != null || MaxResidualRiskPpm != null;
+    public bool IsActive => Require || MinFidelityPpm != null || MaxResidualRiskPpm != null || ApprovedGoal != null || ApprovedGoalMisconfigured;
 
     /// <summary>From a parsed JSON object <c>{require?, min_fidelity_ppm?, max_residual_risk_ppm?}</c>
     /// (<see cref="Pca.ParseJson"/> tree or plain values). A non-object is null (no policy). A present threshold that
@@ -147,8 +150,17 @@ public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm =
     public static IntentPolicy? FromJson(object? o)
     {
         if (o is not Dictionary<string, object?> m) return null;
+        ApprovedGoalRef? ag = null;
+        bool bad = false;
+        if (m.TryGetValue("approved_goal", out var a))
+        {
+            // closed object: exactly goal_digest and policy_digest, both strings; anything else is a misconfiguration (fail closed)
+            if (a is Dictionary<string, object?> am && am.Count == 2 && am.GetValueOrDefault("goal_digest") is string gd && am.GetValueOrDefault("policy_digest") is string pd)
+                ag = new ApprovedGoalRef(gd, pd);
+            else bad = true;
+        }
         return new IntentPolicy(m.TryGetValue("require", out var r) && r is true,
-            Threshold(m, "min_fidelity_ppm"), Threshold(m, "max_residual_risk_ppm"));
+            Threshold(m, "min_fidelity_ppm"), Threshold(m, "max_residual_risk_ppm"), ag, bad);
     }
 
     /// <summary>From raw JSON text (a policy configuration file, or a conformance vector's <c>intent_policy_json</c>),
@@ -171,12 +183,26 @@ public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm =
     }
 }
 
+/// <summary>The digests a goal binding v3 commitment opens to: canonical base64url (32 bytes) of the signed goal and of the policy compiled from it.</summary>
+public sealed record ApprovedGoalRef(string GoalDigest, string PolicyDigest)
+{
+    /// <summary>Both digests are canonical base64url of exactly 32 bytes.</summary>
+    public bool IsValid => Pca.B64uDecode(GoalDigest, 32) != null && Pca.B64uDecode(PolicyDigest, 32) != null;
+}
+
 public sealed class Verdict
 {
     public bool Allow;
-    /// <summary>All eight checks (plus <c>intent</c> after <c>counter</c> when evaluated, then the Intent Layer v2 checks when reported), or only { wire:false } when the wire form is rejected (terminal).</summary>
+    /// <summary>All eight checks (plus <c>intent</c> after <c>counter_format</c> when evaluated, then the Intent Layer v2 checks when reported), or only { wire:false } when the wire form is rejected (terminal).</summary>
     public Dictionary<string, bool> Checks = new();
     public string Reason = "";
+    /// <summary>Every reason in order: the first failure (<see cref="Reason"/>), then one for EACH further failing intent-v2 check (the
+    /// escalate-class ones). <see cref="PcaDecision.DecisionOf(object?)"/> reads the whole list, so a multi-check escalation stays an
+    /// escalation. Empty when allowed, and on a wire failure (<see cref="Reason"/> only).</summary>
+    public List<string> Reasons = new();
+    /// <summary>Rule 21's compatibility mode is in effect (<c>model_polarity</c> "legacy" and a grant reads a model-derived path in where).
+    /// Authorize reports it as <see cref="AuthorizeResult.Degraded"/>["tighten"].</summary>
+    public bool LegacyModelPolarity;
 }
 
 public sealed class StrictJsonException : Exception
@@ -186,13 +212,16 @@ public sealed class StrictJsonException : Exception
 
 public static partial class Pca
 {
-    const string SigDomain = "atlas-pca/actn/v2\0";
-    const string CapDomain = "atlas-pca/cap/v1\0";
+    /// <summary>The maturity tier of this SDK (also the <c>maturity</c> assembly metadata and the <c>Maturity</c> MSBuild property).</summary>
+    public const string Maturity = "stable";
+
+    internal const string SigDomain = "atlas-pca/actn/v2\0";
+    internal const string CapDomain = "atlas-pca/cap/v1\0";
     // v2.1 agent-leaf threshold-share binding (README sections 9 + "v2.1 AGENT-LEAF BINDING").
     const string ShareDomainPrefix = "atlas-pca/share/";
     const string SignersetDomain = "atlas-pca/signerset/v1\0";
     const string ShareSuiteTag = "\0atlas-pca/share-suite/v1\0";
-    const string DefaultRev = "reversible";
+    internal const string DefaultRev = "reversible";
     public const int MaxJsonDepth = 32;
     public const int MaxJsonChars = 1 << 20; // UTF-8 bytes;
     public const int MaxDecimalDigits = 15;
@@ -554,9 +583,9 @@ public static partial class Pca
     }
 
     // ================= hashing / base64url =================
-    static byte[] Sha(byte[] b) => SHA256.HashData(b);
-    static byte[] Canon(object? v) => Encoding.UTF8.GetBytes(Canonicalize(v));
-    static byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
+    internal static byte[] Sha(byte[] b) => SHA256.HashData(b);
+    internal static byte[] Canon(object? v) => Encoding.UTF8.GetBytes(Canonicalize(v));
+    internal static byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
 
     public static string B64u(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
@@ -584,12 +613,12 @@ public static partial class Pca
     public static string HashCanonical(object? v) => B64u(Sha(Canon(v)));
 
     // ================= Merkle =================
-    static byte[] LeafHash(object? leaf) => Sha(Cat(new byte[] { 0x00 }, Canon(leaf)));
-    static byte[] NodeHash(byte[] l, byte[] r) => Sha(Cat(new byte[] { 0x01 }, l, r));
+    internal static byte[] LeafHash(object? leaf) => Sha(Cat(new byte[] { 0x00 }, Canon(leaf)));
+    internal static byte[] NodeHash(byte[] l, byte[] r) => Sha(Cat(new byte[] { 0x01 }, l, r));
 
-    static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }
+    internal static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }
 
-    static byte[] Build(List<byte[]> hs)
+    internal static byte[] Build(List<byte[]> hs)
     {
         if (hs.Count == 1) return hs[0];
         int k = (int)Split(hs.Count);
@@ -643,10 +672,10 @@ public static partial class Pca
 
     public static string ParamsDigest(object? p) => HashCanonical(p ?? new Dictionary<string, object?>());
 
-    static string ConditionsDigest(object? pre, object? post) =>
+    internal static string ConditionsDigest(object? pre, object? post) =>
         HashCanonical(new Dictionary<string, object?> { ["pre"] = pre, ["post"] = post });
 
-    static Dictionary<string, object?>? PlanLeaf(object? nodeId, Dictionary<string, object?>? action, string cond)
+    internal static Dictionary<string, object?>? PlanLeaf(object? nodeId, Dictionary<string, object?>? action, string cond)
     {
         if (nodeId == null) return null;
         var pd = Get(action, "params_digest") ?? ParamsDigest(null);
@@ -1195,6 +1224,8 @@ public static partial class Pca
         "intent",
         // Intent Layer v2 (additive, SIGNED): the session member (rule 13; see IntentSession.ValidateWire / IntentV2).
         "intent_session",
+        // Consistency token (additive, SIGNED): the `fresh_at` member (see FreshAt / FreshAtPolicy).
+        "fresh_at",
         // B4 crypto-agility (additive): absent `alg` == "ed25519" and validates exactly as today.
         "alg", "pq_pk", "pq_sig" };
 
@@ -1277,6 +1308,7 @@ public static partial class Pca
             if (p.TryGetValue("progress_step", out var ps) && ps is not Dictionary<string, object?>) return "'progress_step' must be an object";
             if (p.TryGetValue("intent", out var itn)) { var intentErr = ValidateIntentWire(itn); if (intentErr != null) return intentErr; }
             if (p.TryGetValue("intent_session", out var isn)) { var sessionErr = IntentSession.ValidateWire(isn); if (sessionErr != null) return sessionErr; }
+            if (p.TryGetValue("fresh_at", out var fan)) { var freshErr = FreshAt.WireError(fan); if (freshErr != null) return freshErr; }
             if (p.TryGetValue("prohibition_evidence", out var pe) && pe is not Dictionary<string, object?> && pe is not List<object?>) return "'prohibition_evidence' must be an object or array";
             if (p.TryGetValue("threshold", out var th))
             {
@@ -1311,6 +1343,19 @@ public static partial class Pca
     /// <summary>The goal commitment an <c>envelope.intent</c> claims the root grant carries.</summary>
     public static string IntentGoalCommit(string reference, string mapDigest, string goalSalt) =>
         HashCanonical(new Dictionary<string, object?> { ["d"] = IntentGoalCommitDomain, ["goal"] = IntentGoal(reference, mapDigest), ["salt"] = goalSalt });
+
+    public const string IntentGoalV3Prefix = "pca-intent:v3:";
+
+    /// <summary>The v3 goal string <c>pca-intent:v3:&lt;goal_digest&gt;:&lt;policy_digest&gt;</c>. A malformed digest throws: never commit to garbage.</summary>
+    public static string IntentGoalV3(ApprovedGoalRef approved)
+    {
+        if (approved is null || !approved.IsValid) throw new ArgumentException("IntentGoalV3: goal_digest and policy_digest must be canonical base64url (32 bytes)");
+        return IntentGoalV3Prefix + approved.GoalDigest + ":" + approved.PolicyDigest;
+    }
+
+    /// <summary>The v3 goal commitment for a salt (same domain and hash as <see cref="IntentGoalCommit"/>).</summary>
+    public static string IntentGoalCommitV3(ApprovedGoalRef approved, string goalSalt) =>
+        HashCanonical(new Dictionary<string, object?> { ["d"] = IntentGoalCommitDomain, ["goal"] = IntentGoalV3(approved), ["salt"] = goalSalt });
 
     /// <summary>Intent Layer v2 (rule 13 amends rule 12 step 2): the goal commitment when the PCActn carries a wire-valid
     /// <c>intent_session</c>: the goal is <c>"pca-intent:v2:" + session + ":" + map_digest</c>.</summary>
@@ -1376,17 +1421,22 @@ public static partial class Pca
         {
             if (active && (!OkThreshold(policy!.MinFidelityPpm) || !OkThreshold(policy.MaxResidualRiskPpm)))
                 return "intent policy misconfigured: thresholds must be non-negative safe integers (fail closed)";
+            if (active && (policy!.ApprovedGoalMisconfigured || (policy.ApprovedGoal != null && !policy.ApprovedGoal.IsValid)))
+                return "intent policy misconfigured: approved_goal digests must be canonical base64url (32 bytes) (fail closed)";
             if (!present) return "this verifier requires an intent binding but the PCActn carries none";
             var commit = RootGoalCommit(grant);
             if (commit == null) return "the root grant carries no envelope goal commitment to bind the intent to";
             var i = (Dictionary<string, object?>)intent!;
-            var opened = session != null
+            var v3 = policy?.ApprovedGoal;
+            var opened = v3 != null ? IntentGoalCommitV3(v3, (string)i["goal_salt"]!)
+                : session != null
                 ? (mapForm as string == IntentMap.MapFormCommit
                     ? IntentGoalCommitV2c(session, (string)i["map_digest"]!, (string)i["goal_salt"]!)
                     : IntentGoalCommitV2(session, (string)i["map_digest"]!, (string)i["goal_salt"]!))
                 : IntentGoalCommit((string)i["ref"]!, (string)i["map_digest"]!, (string)i["goal_salt"]!);
             if (opened != commit)
-                return "intent ref / map_digest / goal_salt do not open the root grant's goal commitment";
+                return v3 != null ? "the root grant's goal commitment does not open to the approved goal and compiled policy (v3)"
+                    : "intent ref / map_digest / goal_salt do not open the root grant's goal commitment";
             TryInt(i["fidelity_ppm"], out var fid);
             TryInt(i["residual_risk_ppm"], out var risk);
             if (policy?.MinFidelityPpm is double min && !(fid >= min))
@@ -1411,11 +1461,11 @@ public static partial class Pca
 
     /// <summary>Verify RAW signed bytes: strict-parse (a parse failure or non-object is a `wire` failure), then verify.</summary>
     /// <remarks><paramref name="intentPolicy"/> (Intent Layer M2, optional): the <c>intent</c> check is reported after
-    /// <c>counter</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
+    /// <c>counter_format</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
     /// <remarks><paramref name="intentV2"/> (Intent Layer v2, optional): the verifier state of rules 13-18; the v2 checks are
     /// reported after <c>intent</c> exactly when <see cref="IntentV2"/> reports them.</remarks>
     public static Verdict VerifyRaw(string pcactnJson, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null,
-        IntentPolicy? intentPolicy = null, IntentV2Context? intentV2 = null)
+        IntentPolicy? intentPolicy = null, IntentV2Context? intentV2 = null, FreshAtPolicy? freshAt = null)
     {
         object? tree;
         if (pcactnJson == null) // R6-05: total entry point (a null document is a wire failure, not a NullReferenceException)
@@ -1437,18 +1487,18 @@ public static partial class Pca
             v.Checks["wire"] = false;
             return v;
         }
-        return VerifyPcactnCore(tree, grant, now, audience, allowedSuites, intentPolicy, intentV2);
+        return VerifyPcactnCore(tree, grant, now, audience, allowedSuites, intentPolicy, intentV2, freshAt);
     }
 
     /// <remarks><paramref name="intentPolicy"/> (Intent Layer M2, optional): the <c>intent</c> check is reported after
-    /// <c>counter</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
+    /// <c>counter_format</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
     /// <remarks><paramref name="intentV2"/> (Intent Layer v2, optional): the verifier state of rules 13-18 (<see cref="IntentV2Context"/>).
     /// A PCActn without <c>intent_session</c> under a context without an active v2 policy verifies exactly as before.</remarks>
     public static Verdict VerifyPcactnCore(object? pcactn, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null,
-        IntentPolicy? intentPolicy = null, IntentV2Context? intentV2 = null)
+        IntentPolicy? intentPolicy = null, IntentV2Context? intentV2 = null, FreshAtPolicy? freshAt = null)
     {
         // TOTAL (R6-05): the wire check runs outside the per-check try below, so guard the whole entry point.
-        try { return VerifyPcactnCoreUnchecked(pcactn, grant, now, audience, allowedSuites, intentPolicy, intentV2); }
+        try { return VerifyPcactnCoreUnchecked(pcactn, grant, now, audience, allowedSuites, intentPolicy, intentV2, freshAt); }
         catch (Exception ex)
         {
             var v = new Verdict { Allow = false, Reason = "wire: malformed input (" + ex.GetType().Name + ")" };
@@ -1459,7 +1509,7 @@ public static partial class Pca
     }
 
     static Verdict VerifyPcactnCoreUnchecked(object? pcactn, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites,
-        IntentPolicy? intentPolicy, IntentV2Context? intentV2)
+        IntentPolicy? intentPolicy, IntentV2Context? intentV2, FreshAtPolicy? freshAt)
     {
         var v = new Verdict();
         var wire = ValidateWire(pcactn);
@@ -1470,8 +1520,8 @@ public static partial class Pca
         }
         var p = (Dictionary<string, object?>)pcactn!;
         v.Checks["wire"] = true;
-        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" }) v.Checks[k] = false;
-        // Intent Layer M2: `intent` is reported (after counter) iff the PCActn carries intent or the policy is active.
+        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" }) v.Checks[k] = false;
+        // Intent Layer M2: `intent` is reported (after counter_format) iff the PCActn carries intent or the policy is active.
         bool intentPresent = p.ContainsKey("intent");
         if (intentPresent || intentPolicy is { IsActive: true }) v.Checks["intent"] = false;
         bool failed = false;
@@ -1532,8 +1582,8 @@ public static partial class Pca
                 PinnedPq.Resolve(Get(leafCapObj, "holder") as string, Get(p, "pq_pk"), holderPq: Get(leafCapObj, "holder_pq")))) v.Checks["leaf_signature"] = true;
             else Fail("leaf_signature", "signature does not verify under the leaf holder key");
 
-            if (counter >= 0) v.Checks["counter"] = true;
-            else Fail("counter", "missing or not a non-negative safe integer");
+            if (counter >= 0) v.Checks["counter_format"] = true;
+            else Fail("counter_format", "missing or not a non-negative safe integer");
 
             var intentWhy = DecideIntent(Get(p, "intent"), intentPresent, grant, intentPolicy, Get(Get(p, "intent_session") as Dictionary<string, object?>, "session") as string,
                 Get(Get(p, "intent_session") as Dictionary<string, object?>, "map_form"));
@@ -1547,8 +1597,10 @@ public static partial class Pca
             v.Allow = false;
             v.Reason = "malformed PCActn: " + ex.Message;
         }
-        // Intent Layer v2 (rules 13-18): reported in pipeline order exactly when IntentV2 reports them (total: never throws)
-        foreach (var c in IntentV2.Decide(p, grant, intentV2, now).Checks)
+        // Intent Layer v2 (rules 13-21): reported in pipeline order exactly when IntentV2 reports them (total: never throws)
+        var v2d = IntentV2.Decide(p, grant, intentV2, now);
+        v.LegacyModelPolarity = v2d.Legacy;
+        foreach (var c in v2d.Checks)
         {
             v.Checks[c.Name] = c.Ok;
             if (!c.Ok)
@@ -1557,6 +1609,17 @@ public static partial class Pca
                 if (v.Reason == "") v.Reason = c.Name + ": " + c.Reason;
             }
         }
+        // Consistency token: `fresh_at` (reported only when the PCActn carries the member, a side-carried token is read, or the policy requires one).
+        // Like the reference, a failure here is the verdict's reason only when no earlier check failed.
+        var fa = FreshAt.Decide(Get(p, "fresh_at"), p.ContainsKey("fresh_at"), freshAt, now);
+        if (fa.Status == "pass") v.Checks["fresh_at"] = true;
+        else if (fa.Status == "fail")
+        {
+            v.Checks["fresh_at"] = false;
+            v.Allow = false;
+            if (v.Reason == "") v.Reason = "fresh_at: " + fa.Reason;
+        }
+        if (!v.Allow) v.Reasons = PcaDecision.FoldV2Reasons(v.Reason.Length > 0 ? new[] { v.Reason } : Array.Empty<string>(), v2d.Checks.Select(c => new PcaDecision.V2CheckResult(c.Name, c.Ok, c.Reason)));
         return v;
     }
 }
