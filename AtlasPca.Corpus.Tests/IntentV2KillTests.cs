@@ -111,7 +111,7 @@ public partial class IntentV2KillTests
         return c;
     }
     static Verdict Verify(D grant, D p, object? ctx) => Pca.VerifyPcactnCore(p, grant, NOW, AUD, null, null, IntentV2Context.FromJson(ctx));
-    static readonly string[] CORE = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter", "intent" };
+    static readonly string[] CORE = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format", "intent" };
     static List<string> Keys(params string[] extra) => CORE.Concat(extra).ToList();
     static List<string> Failed(Verdict v) => v.Checks.Where(e => !e.Value).Select(e => e.Key).ToList();
 
