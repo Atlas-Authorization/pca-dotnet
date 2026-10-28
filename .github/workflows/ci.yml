@@ -1,7 +1,9 @@
 name: CI
 
 # Build the solution, run the xUnit suites (incl. the corpus tests) and the ConformanceRunner over the shared corpus
-# (conformance/vectors.json).
+# (conformance/vectors.json). The 0.5 vector suites (decision / escalation, model rules, passport, attestation evidence, intent-state,
+# ledger / optimistic / mesh, goal, K3 artifacts, fresh_at) each run as their own named step below, after asserting that their vector file is present (a missing
+# vector file FAILS, it is never skipped).
 on:
   push:
     branches: [main, 'ci/**']
@@ -51,3 +53,97 @@ jobs:
       - name: Conformance corpus
         working-directory: ${{ env.PCA_MONO_SDK }}
         run: dotnet run --project ConformanceRunner -c Release --no-build
+      - name: Vector files present (a missing file fails)
+        shell: bash
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          c=../../packages/pca/conformance
+          for f in decision-vectors.json model-rules-vectors.json passport-vectors.json attestation-evidence-vectors.json intent-state-vectors.json ledger-vectors.json optimistic-vectors.json mesh-vectors.json keys.json goal-commit-vectors.json staleness-vectors.json operation-vectors.json plan-vectors.json assurance-vectors.json caveat-lang-vectors.json forbid-certificate-vectors.json policy-link-vectors.json k3-vectors.json fresh-at-vectors.json pca-grant-vectors.json blueprint-vectors.json a2a-vectors.json workflow-vectors.json readside-vectors.json vault-aggregate-vectors.json authorize-workflow-fixtures.json lease-vectors.json obligations-vectors.json break-glass-vectors.json missing-context-vectors.json policy-classes-vectors.json provenance-vectors.json sigstore-vectors.json; do
+            test -s "$c/$f" || { echo "::error::conformance/$f is missing"; exit 1; }
+          done
+          test -s ../../packages/pca-conformance/vectors/goal/index.json || { echo "::error::goal vectors are missing"; exit 1; }
+          grep -q '"passport_hardware_vectors"' "$c/passport-vectors.json" || { echo "::error::passport-vectors.json has no passport_hardware_vectors table"; exit 1; }
+      - name: Decision, escalation answers and model rules (rules 20-21 through Authorize)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~DecisionVectorTests|FullyQualifiedName~ModelRulesVectorTests"
+          dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~EscalationTests"
+      - name: Caveat language v2 (discharges, narrow, max_uses, derive, SPIFFE; vectors + Authorize K1 input)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~CaveatLangVectorTests"
+          dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~K1AuthorizeTests"
+      - name: Forbid-wins certificate and linked policy template vectors (a missing file fails, never skips)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~PolicyAuthoringVectorTests"
+      - name: Signed passport (every suite, hardware seam)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~PassportVectorTests"
+      - name: Hardware attestation verifiers (evidence vectors, strict DER/X.509, fail-closed tables)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~AttestationVectorTests|FullyQualifiedName~AttestationUnitTests|FullyQualifiedName~PassportVectorTests.PassportHardwareVectors"
+      - name: actions-vectors (action kit, ActionDef parse, digest, trait expansion, floor check, pack proof, ActionSchema v2)
+        shell: bash
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          test -d ../../packages/pca-conformance/vectors/actions || test -d ../../conformance/actions || { echo "::error::action-kit vectors are missing"; exit 1; }
+          dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~ActionsVectorTests"
+      - name: Track 3 vectors (intent-state, ledger, optimistic, mesh) and goal vectors
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~IntentStateVectorTests|FullyQualifiedName~ExtVectorTests|FullyQualifiedName~GoalVectorTests"
+      - name: Goal binding v3 (approved_goal) vectors
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~GoalCommitV3Tests"
+      - name: Revocation staleness (T9) vectors and the Authorize freshness check
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~StalenessVectorTests"
+          dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~StalenessAuthorizeTests"
+      - name: Operation records and plan lifecycle (T3, T10) vectors, executor, plan registry, SQL stores
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~OperationVectorTests|FullyQualifiedName~PlanVectorTests"
+          dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~ExecutorTests"
+      - name: Assurance labels (T8, B7) vectors and the Authorize assurance gate
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~AssuranceVectorTests"
+          dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~AssuranceAuthorizeTests"
+      - name: Middleware options (approved goal, staleness, assurance, plans, executor)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~MiddlewareOptionsTests"
+      - name: Step-up client for the principal device
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~StepUpTests"
+      - name: Store conformance helper (state and operation stores, negative controls, SQLite)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~StoreConformanceTests"
+          dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~StoreConformanceSqlTests"
+      - name: K3 artifacts (bundles, decision log, list receipts, grant management) and the fresh_at token
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests -c Release --no-build --filter "FullyQualifiedName~K3VectorTests|FullyQualifiedName~FreshAtVectorTests|FullyQualifiedName~PcaGrantVectorTests|FullyQualifiedName~BlueprintVectorTests|FullyQualifiedName~A2aVectorTests|FullyQualifiedName~K4VectorTests|FullyQualifiedName~K5VectorTests|FullyQualifiedName~BreakGlassVectorTests|FullyQualifiedName~LeaseVectorTests|FullyQualifiedName~MissingContextVectorTests|FullyQualifiedName~ObligationsVectorTests|FullyQualifiedName~PolicyClassesVectorTests"
+      - name: K5 workflow admission inside Authorize and PcaMiddleware (C-308 shared authorize-workflow fixtures; a missing file fails)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.AspNetCore.Tests -c Release --no-build --filter "FullyQualifiedName~WorkflowAuthorizeTests|FullyQualifiedName~MiddlewareWorkflowTests"
+
+  example:
+    name: example (minimal API server)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca --less
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      # the example is its own project (not in the solution); the smoke test sends a signed proof through the real middleware
+      - name: Build and test the example
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          dotnet build examples/MinimalApiServer/MinimalApiServer.csproj -c Release
+          dotnet test examples/MinimalApiServer.Tests/MinimalApiServer.Tests.csproj -c Release

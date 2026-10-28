@@ -4,10 +4,20 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AtlasPca</RootNamespace>
-    <Version>0.4.1</Version>
+    <Version>0.5.0</Version>
+    <!-- Maturity tier of the package: stable | production | experimental (the PCA maturity tiers page defines them). Package tag + assembly metadata. -->
+    <Maturity>stable</Maturity>
+    <PackageTags>pca;proof-carrying-authority;maturity-stable</PackageTags>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>maturity</_Parameter1>
+      <_Parameter2>$(Maturity)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="AtlasPca.Corpus.Tests" />
+    <InternalsVisibleTo Include="AtlasPca.AspNetCore.Tests" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.1" />

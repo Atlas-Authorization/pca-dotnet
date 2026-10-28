@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../AtlasPca/AtlasPca.csproj" />
+    <ProjectReference Include="../../AtlasPca.AspNetCore/AtlasPca.AspNetCore.csproj" />
+  </ItemGroup>
+</Project>
