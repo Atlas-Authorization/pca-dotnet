@@ -4,10 +4,19 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AtlasPca.AspNetCore</RootNamespace>
-    <Version>0.4.1</Version>
+    <Version>0.5.0</Version>
+    <!-- Maturity tier of the package: stable | production | experimental (the PCA maturity tiers page defines them). Package tag + assembly metadata. -->
+    <Maturity>stable</Maturity>
+    <PackageTags>pca;proof-carrying-authority;maturity-stable</PackageTags>
     <!-- net8.0 ASP.NET Core reference pack is used to compile; roll forward to the installed runtime at run time. -->
     <RollForward>Major</RollForward>
   </PropertyGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>maturity</_Parameter1>
+      <_Parameter2>$(Maturity)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
   <ItemGroup>
     <!-- Microsoft.AspNetCore.* as a framework reference so the base crypto lib (AtlasPca) stays dependency-light. -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
