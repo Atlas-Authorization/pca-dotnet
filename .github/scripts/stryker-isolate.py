@@ -33,6 +33,8 @@ a = ap.parse_args()
 src = os.path.abspath(a.src)
 work = os.path.abspath(a.work or os.path.join(src, ".mutwork"))
 TEST = "AtlasPca.Corpus.Tests"
+# the kill set: the corpus project plus the Authorize / executor / middleware tests (they exercise Authorize.cs, Executor.cs, ...)
+TESTS = [TEST, "AtlasPca.AspNetCore.Tests"]
 muts = json.load(open(a.mutants))
 for m in muts:
     for k in ("file", "start", "end", "replacement"):
@@ -52,7 +54,7 @@ def copy_tree(dst):
     if os.path.exists(dst):
         shutil.rmtree(dst)
     os.makedirs(dst)
-    for d in ("AtlasPca", TEST):
+    for d in ("AtlasPca", "AtlasPca.AspNetCore", *TESTS):
         shutil.copytree(os.path.join(src, d), os.path.join(dst, d), ignore=shutil.ignore_patterns("bin", "obj", "StrykerOutput", ".mutwork"))
     for f in ("global.json",):
         if os.path.exists(os.path.join(src, f)):
@@ -63,15 +65,32 @@ test_cmd = ["dotnet", "test", "-c", "Release", "--no-build", "--nologo", "--filt
 if a.stop_on_fail:
     test_cmd += ["--", "xUnit.StopOnFail=true"]
 
+def build_all(w, extra):
+    for t in TESTS:
+        rc, out, _ = sh(["dotnet", "build", "-c", "Release", "--nologo", "-v", "q"] + extra, os.path.join(w, t))
+        if rc != 0:
+            return rc, out
+    return 0, ""
+
+def test_all(w, timeout=None):
+    """Run every test project; the first failure (or timeout) decides."""
+    total = 0.0
+    for t in TESTS:
+        rc, out, secs = sh(test_cmd, os.path.join(w, t), timeout=timeout, env=TEST_ENV)
+        total += secs
+        if rc != 0:
+            return rc, out, total
+    return 0, "", total
+
 jobs = max(1, min(a.jobs, len(muts))) if muts else 0
 workers = [os.path.join(work, f"w{k}") for k in range(jobs)]
 base_secs = []
 def prepare(w):
     copy_tree(w)
-    rc, out, _ = sh(["dotnet", "build", "-c", "Release", "--nologo", "-v", "q"], os.path.join(w, TEST))
+    rc, out = build_all(w, [])
     if rc != 0:
         sys.exit(f"{w}: the unmutated source does not build:\n{out[-3000:]}")
-    rc, out, secs = sh(test_cmd, os.path.join(w, TEST), env=TEST_ENV)
+    rc, out, secs = test_all(w)
     if rc != 0:
         sys.exit(f"{w}: the oracle fails on the unmutated source:\n{out[-3000:]}")
     base_secs.append(secs)
@@ -96,12 +115,12 @@ def run(m):
         s, e = offset(lines, m["start"]["line"], m["start"]["column"]), offset(lines, m["end"]["line"], m["end"]["column"])
         try:
             open(p, "w", encoding="utf-8").write(orig[:s] + m["replacement"] + orig[e:])
-            rc, out, _ = sh(["dotnet", "build", "-c", "Release", "--no-restore", "--nologo", "-v", "q"], os.path.join(w, TEST))
+            rc, out = build_all(w, ["--no-restore"])
             if rc != 0:
                 err = next((l.strip() for l in out.split("\n") if ": error " in l), "?")
                 st, det = "CompileError", re.sub(r"\s*\[[^\]]*\.csproj\]$", "", err)[-200:]
             else:
-                rc, out, secs = sh(test_cmd, os.path.join(w, TEST), timeout=timeout, env=TEST_ENV)
+                rc, out, secs = test_all(w, timeout)
                 if rc is None:
                     st, det = "Timeout", f">{timeout}s"
                 elif rc != 0:

@@ -42,6 +42,12 @@ PLAN = [
     ["ActionSchema.cs", "IntentRevocation.cs"],
     ["ParamProvenance.cs", "IntentPrimitives.cs", "LessNative.cs"],
     ["IntentClassifier.cs", "IntentArtifacts.cs"],
+    ["Authorize.cs"],
+    ["Operations.cs", "AtomicKv.cs", "Executor.cs"],
+    ["PlanLifecycle.cs", "Escalation.cs", "RevocationFreshness.cs"],
+    ["Assurance.cs", "StepUp.cs"],
+    ["StoreConformance.cs", "Decision.cs"],
+    ["Passport.cs", "IntentHistory.cs"],
 ]
 
 def opt(name):

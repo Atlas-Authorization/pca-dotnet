@@ -15,4 +15,8 @@
   <ItemGroup>
     <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- the conformance-harness provenance recorder shared with the ASP.NET Core tests -->
+    <Compile Include="../AtlasPca.AspNetCore.Tests/ProvHarness.cs" Link="ProvHarness.cs" />
+  </ItemGroup>
 </Project>

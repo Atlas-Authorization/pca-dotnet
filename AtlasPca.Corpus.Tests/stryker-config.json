@@ -2,7 +2,8 @@
   "stryker-config": {
     "project": "AtlasPca.csproj",
     "test-projects": [
-      "AtlasPca.Corpus.Tests.csproj"
+      "AtlasPca.Corpus.Tests.csproj",
+      "../AtlasPca.AspNetCore.Tests/AtlasPca.AspNetCore.Tests.csproj"
     ],
     "mutation-level": "Complete",
     "reporters": [
