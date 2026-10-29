@@ -1,8 +1,8 @@
 name: Mutation
 
 # Mutation testing of the verifier (AtlasPca/) with Stryker.NET (AtlasPca.Corpus.Tests/stryker-config.json: mutation level
-# Complete, oracle = the corpus test project), split into 12 shards over every .cs file of AtlasPca/: Pca.cs in 3 line spans
-# cut at member declarations, the other 17 files grouped by size (the plan, the per-member directive fencing and the check
+# Complete, oracle = the corpus test project plus the Authorize / executor / middleware test project), split into 18 shards over every .cs file of AtlasPca/: Pca.cs in 3 line spans
+# cut at member declarations, the other 30 files grouped by size (the plan, the per-member directive fencing and the check
 # that the plan lists every file are in scripts/stryker-spans.py). Each shard counts and lists only its IN-SCOPE mutants
 # (Stryker compiles, and reports CompileError for, the mutants of every file in every shard), and every in-scope
 # CompileError is then built and tested ALONE (scripts/stryker-isolate.py): Stryker rolls back whole groups of mutants
@@ -41,21 +41,22 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
+# Actions.cs (action kit) is mutated with the other AtlasPca/*.cs files; ActionsVectorTests (shared vectors, flagship layout) is part of the oracle project.
 env:
   CRATE: dotnet-pca
-  SHARDS: '12'
+  SHARDS: '18'
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: '1'
 
 jobs:
   shard:
-    name: shard ${{ matrix.shard }}/12
+    name: shard ${{ matrix.shard }}/18
     runs-on: ubuntu-latest
     timeout-minutes: 340
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -99,7 +100,7 @@ jobs:
           [ -n "$SDK8" ] || { echo "::error::no .NET 8 SDK"; exit 1; }
           (cd .. && dotnet new globaljson --sdk-version "$SDK8" --roll-forward disable --force >/dev/null)
           dotnet --version
-          dotnet test -c Release > "$RUNNER_TEMP/baseline.log" 2>&1 || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the oracle fails on the unmutated source"; exit 1; }
+          dotnet test -c Release > "$RUNNER_TEMP/baseline.log" 2>&1 && (cd ../AtlasPca.AspNetCore.Tests && dotnet test -c Release >> "$RUNNER_TEMP/baseline.log" 2>&1) || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the oracle fails on the unmutated source"; exit 1; }
           # a mutant that allocates without bound must die alone (killed), not exhaust the runner: 3 GiB GC heap per test
           # host, set in the test project's runtimeconfig (CI copy only). Not as a DOTNET_GCHeapHardLimit environment
           # variable: that also caps Stryker's in-process compilation, and every Pca.cs mutant then "caused compile errors".
