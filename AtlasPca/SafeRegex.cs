@@ -45,7 +45,7 @@ public static class SafeRegex
         new[] { 0x2028, 0x2029 }, new[] { 0x202f, 0x202f }, new[] { 0x205f, 0x205f }, new[] { 0x3000, 0x3000 }, new[] { 0xfeff, 0xfeff } };
     static readonly int[][] LineTerminators = { new[] { 0x0a, 0x0a }, new[] { 0x0d, 0x0d }, new[] { 0x2028, 0x2029 } };
 
-    static int[][] Normalize(IEnumerable<int[]> input)
+    internal static int[][] Normalize(IEnumerable<int[]> input)
     {
         var s = input.Select(r => new[] { r[0], r[1] }).OrderBy(r => r[0]).ToList();
         var output = new List<int[]>();
@@ -58,7 +58,7 @@ public static class SafeRegex
         return output.ToArray();
     }
 
-    static int[][] Complement(int[][] r)
+    internal static int[][] Complement(int[][] r)
     {
         var output = new List<int[]>();
         int next = 0;
@@ -82,7 +82,7 @@ public static class SafeRegex
         internal Node(char k) { K = k; }
     }
 
-    sealed class Refuse : Exception { internal Refuse(string m) : base(m) { } }
+    sealed class Refuse : Exception { } // why a pattern is refused is never observable (Compile returns null), so it carries no message
 
     static readonly Regex Quant = new(@"^\{([0-9]{1,4})(?:(,)([0-9]{0,4}))?\}", RegexOptions.CultureInvariant);
 
@@ -98,7 +98,7 @@ public static class SafeRegex
         internal Node Parse()
         {
             var n = Alt();
-            if (i < s.Length) throw new Refuse("unbalanced )");
+            if (i < s.Length) throw new Refuse(); // unbalanced )
             return n;
         }
 
@@ -128,15 +128,15 @@ public static class SafeRegex
             else if (c == '{')
             {
                 var m = Quant.Match(s.Substring(i, Math.Min(s.Length, i + 16) - i));
-                if (!m.Success) throw new Refuse("{ is not a well-formed quantifier");
+                if (!m.Success) throw new Refuse(); // { is not a well-formed quantifier
                 min = int.Parse(m.Groups[1].Value);
                 max = !m.Groups[2].Success ? min : m.Groups[3].Value.Length == 0 ? double.PositiveInfinity : int.Parse(m.Groups[3].Value);
-                if (max < min) throw new Refuse("quantifier range out of order");
+                if (max < min) throw new Refuse(); // quantifier range out of order
                 i += m.Value.Length;
             }
             else return atom;
-            if (atom.K == '^' || atom.K == '$') throw new Refuse("nothing to repeat (assertion)");
-            if ((!double.IsPositiveInfinity(max) && max > MaxRepeat) || min > MaxRepeat) throw new Refuse("repeat bound too large");
+            if (atom.K == '^' || atom.K == '$') throw new Refuse(); // nothing to repeat (assertion)
+            if ((!double.IsPositiveInfinity(max) && max > MaxRepeat) || min > MaxRepeat) throw new Refuse(); // repeat bound too large
             if (At(i) == '?') i++;
             return new Node('r') { Child = atom, Min = min, Max = max };
         }
@@ -153,11 +153,11 @@ public static class SafeRegex
                         i++;
                         if (At(i) == '?')
                         {
-                            if (At(i + 1) != ':') throw new Refuse("lookaround / named groups are not supported");
+                            if (At(i + 1) != ':') throw new Refuse(); // lookaround / named groups are not supported
                             i += 2;
                         }
                         var n = Alt();
-                        if (At(i) != ')') throw new Refuse("unterminated group");
+                        if (At(i) != ')') throw new Refuse(); // unterminated group
                         i++;
                         return n;
                     }
@@ -166,13 +166,16 @@ public static class SafeRegex
                 case '^': i++; return new Node('^');
                 case '$': i++; return new Node('$');
                 case '\\': return SetNode(EscapeInner(false).Set);
-                case '*': case '+': case '?': throw new Refuse("nothing to repeat");
-                case '{': throw new Refuse("{ is not a well-formed quantifier");
+                case '*': case '+': case '?': throw new Refuse(); // nothing to repeat
+                case '{': throw new Refuse(); // { is not a well-formed quantifier
                 default:
                     i++;
                     return SetNode(new CharSet(new[] { new int[] { c, c } }, false));
             }
         }
+
+        // a class escape's Ch is never read (only a non-class atom's code bounds a range)
+        static Esc ClassEsc(int[][] set, bool negated) => new(new CharSet(set, negated), true, 0);
 
         static Esc Single(int code) => new(new CharSet(new[] { new[] { code, code } }, false), false, code);
 
@@ -190,16 +193,16 @@ public static class SafeRegex
         {
             i++;
             int c = At(i);
-            if (c < 0) throw new Refuse("trailing backslash");
+            if (c < 0) throw new Refuse(); // trailing backslash
             i++;
             switch (c)
             {
-                case 'd': return new(new CharSet(Digit, false), true, -1);
-                case 'D': return new(new CharSet(Digit, true), true, -1);
-                case 'w': return new(new CharSet(Word, false), true, -1);
-                case 'W': return new(new CharSet(Word, true), true, -1);
-                case 's': return new(new CharSet(Space, false), true, -1);
-                case 'S': return new(new CharSet(Space, true), true, -1);
+                case 'd': return ClassEsc(Digit, false);
+                case 'D': return ClassEsc(Digit, true);
+                case 'w': return ClassEsc(Word, false);
+                case 'W': return ClassEsc(Word, true);
+                case 's': return ClassEsc(Space, false);
+                case 'S': return ClassEsc(Space, true);
                 case 't': return Single(9);
                 case 'n': return Single(10);
                 case 'v': return Single(11);
@@ -208,19 +211,19 @@ public static class SafeRegex
                 case '0':
                     {
                         int n = At(i);
-                        if (n >= '0' && n <= '9') throw new Refuse("octal escape");
+                        if (n >= '0' && n <= '9') throw new Refuse(); // octal escape
                         return Single(0);
                     }
                 case 'x':
                     {
-                        if (i + 2 > s.Length || !IsHex(s, i, 2)) throw new Refuse("bad \\x escape");
+                        if (i + 2 > s.Length || !IsHex(s, i, 2)) throw new Refuse(); // bad \x escape
                         int v = Convert.ToInt32(s.Substring(i, 2), 16);
                         i += 2;
                         return Single(v);
                     }
                 case 'u':
                     {
-                        if (i + 4 > s.Length || !IsHex(s, i, 4)) throw new Refuse("bad \\u escape");
+                        if (i + 4 > s.Length || !IsHex(s, i, 4)) throw new Refuse(); // bad \u escape
                         int v = Convert.ToInt32(s.Substring(i, 4), 16);
                         i += 4;
                         return Single(v);
@@ -228,16 +231,16 @@ public static class SafeRegex
                 case 'c':
                     {
                         int l = At(i);
-                        if (!((l >= 'A' && l <= 'Z') || (l >= 'a' && l <= 'z'))) throw new Refuse("bad \\c escape");
+                        if (!((l >= 'A' && l <= 'Z') || (l >= 'a' && l <= 'z'))) throw new Refuse(); // bad \c escape
                         i++;
                         return Single(l % 32);
                     }
                 case 'b':
                     if (inClass) return Single(8);
-                    throw new Refuse("word-boundary assertions are not supported");
+                    throw new Refuse(); // word-boundary assertions are not supported
                 default:
                     if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')
-                        throw new Refuse("escape is not supported");
+                        throw new Refuse(); // escape is not supported
                     return Single(c);
             }
         }
@@ -251,7 +254,7 @@ public static class SafeRegex
             while (true)
             {
                 int c = At(i);
-                if (c < 0) throw new Refuse("unterminated class");
+                if (c < 0) throw new Refuse(); // unterminated class
                 if (c == ']') { i++; break; }
                 var a = ReadAtom();
                 if (At(i) == '-' && At(i + 1) >= 0 && At(i + 1) != ']')
@@ -260,33 +263,32 @@ public static class SafeRegex
                     var b = ReadAtom();
                     if (a.Cls || b.Cls)
                     {
-                        foreach (var r in a.Set.Ranges) ranges.Add(new[] { r[0], r[1] });
+                        foreach (var r in a.Ranges) ranges.Add(new[] { r[0], r[1] });
                         ranges.Add(new[] { 0x2d, 0x2d });
-                        foreach (var r in b.Set.Ranges) ranges.Add(new[] { r[0], r[1] });
+                        foreach (var r in b.Ranges) ranges.Add(new[] { r[0], r[1] });
                     }
                     else
                     {
-                        if (a.Ch > b.Ch) throw new Refuse("class range out of order");
+                        if (a.Ch > b.Ch) throw new Refuse(); // class range out of order
                         ranges.Add(new[] { a.Ch, b.Ch });
                     }
                 }
-                else foreach (var r in a.Set.Ranges) ranges.Add(new[] { r[0], r[1] });
+                else foreach (var r in a.Ranges) ranges.Add(new[] { r[0], r[1] });
             }
             return new Node('s') { Set = new CharSet(Normalize(ranges), negated) };
         }
 
         /// <summary>A class atom; its set holds plain (already complemented) ranges.</summary>
-        Esc ReadAtom()
+        (int[][] Ranges, bool Cls, int Ch) ReadAtom()
         {
             int c = s[i];
             if (c == '\\')
             {
                 var e = EscapeInner(true);
-                var rs = e.Set.Negated ? Complement(e.Set.Ranges) : e.Set.Ranges;
-                return new Esc(new CharSet(rs, false), e.Cls, e.Ch);
+                return (e.Set.Negated ? Complement(e.Set.Ranges) : e.Set.Ranges, e.Cls, e.Ch);
             }
             i++;
-            return new Esc(new CharSet(new[] { new[] { c, c } }, false), false, c);
+            return (new[] { new[] { c, c } }, false, c);
         }
     }
 
@@ -308,7 +310,7 @@ public static class SafeRegex
 
     static void Emit(Node node, List<Inst> prog)
     {
-        if (prog.Count > MaxNfaInstructions) throw new Refuse("pattern too large");
+        if (prog.Count > MaxNfaInstructions) throw new Refuse(); // pattern too large
         switch (node.K)
         {
             case 's': prog.Add(new Inst(OpSet, 0, 0, node.Set)); return;
@@ -323,10 +325,10 @@ public static class SafeRegex
                         if (i < node.Items.Count - 1)
                         {
                             int split = prog.Count;
-                            prog.Add(new Inst(OpSplit, split + 1, -1, null));
+                            prog.Add(new Inst(OpSplit, split + 1, 0, null)); // Y patched below
                             Emit(node.Items[i], prog);
                             jmps.Add(prog.Count);
-                            prog.Add(new Inst(OpJmp, -1, 0, null));
+                            prog.Add(new Inst(OpJmp, 0, 0, null)); // X patched below
                             prog[split].Y = prog.Count;
                         }
                         else Emit(node.Items[i], prog);
@@ -340,7 +342,7 @@ public static class SafeRegex
                     if (double.IsPositiveInfinity(node.Max))
                     {
                         int split = prog.Count;
-                        prog.Add(new Inst(OpSplit, split + 1, -1, null));
+                        prog.Add(new Inst(OpSplit, split + 1, 0, null)); // Y patched below
                         Emit(node.Child!, prog);
                         prog.Add(new Inst(OpJmp, split, 0, null));
                         prog[split].Y = prog.Count;
@@ -351,12 +353,12 @@ public static class SafeRegex
                         for (int i = node.Min; i < node.Max; i++)
                         {
                             splits.Add(prog.Count);
-                            prog.Add(new Inst(OpSplit, prog.Count + 1, -1, null));
+                            prog.Add(new Inst(OpSplit, prog.Count + 1, 0, null)); // Y patched below
                             Emit(node.Child!, prog);
                         }
                         foreach (var sp in splits) prog[sp].Y = prog.Count;
                     }
-                    if (prog.Count > MaxNfaInstructions) throw new Refuse("pattern too large");
+                    if (prog.Count > MaxNfaInstructions) throw new Refuse(); // pattern too large
                     return;
                 }
         }

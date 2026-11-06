@@ -96,7 +96,7 @@ public static class IntentSession
         return null;
     }
 
-    static bool KeysAre(object? o, params string[] keys) => o is D m && m.Count == keys.Length && keys.All(m.ContainsKey);
+    internal static bool KeysAre(object? o, params string[] keys) => o is D m && m.Count == keys.Length && keys.All(m.ContainsKey);
 
     /// <summary>Structural validation of a signed session root. Null = well-formed. Never throws.</summary>
     public static string? RootShapeError(object? sO)

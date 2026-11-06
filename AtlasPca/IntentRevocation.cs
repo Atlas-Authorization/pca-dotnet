@@ -137,6 +137,7 @@ public static class IntentRevocation
                 if (IntentJs.NumOf(ep["epoch"])!.Value < IntentJs.NumOf(IntentJs.Get(lep, "epoch"))!.Value) return "revocation epoch rollback (older than the last accepted)";
                 foreach (var id in ((L)IntentJs.Get(last, "revoked")!).Cast<string>())
                     if (!cur.Contains(id)) return $"the epoch drops '{id}', revoked in the last accepted epoch (not append-only)";
+                // defence in depth (intent-revocation.ts:127): the drop check already catches it, as epoch == set size makes an equal-size superset the same set and root
                 if (IntentJs.NumOf(ep["epoch"]) == IntentJs.NumOf(IntentJs.Get(lep, "epoch")) && ep["root"] as string != IntentJs.Get(lep, "root") as string)
                     return "two different revocation sets under one epoch number (equivocation)";
             }

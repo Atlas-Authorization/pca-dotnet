@@ -28,7 +28,7 @@ public class IntentAccOracleTests
     static string S(object? o) => (string)o!;
     static double Dbl(object? o) => IntentJs.NumOf(o)!.Value;
 
-    static object? ToJson(object? o) => o switch
+    internal static object? ToJson(object? o) => o switch
     {
         long v => new Num(v.ToString()),
         int v => new Num(v.ToString()),
@@ -39,10 +39,10 @@ public class IntentAccOracleTests
         _ => o,
     };
 
-    static void Run(string fn, Func<L, object?> f)
+    internal static void Run(string fn, Func<L, object?> f, L? cases = null)
     {
         var bad = new List<string>(); int n = 0;
-        foreach (D c in Cases.Value)
+        foreach (D c in cases ?? Cases.Value)
         {
             if ((string)c["fn"]! != fn) continue;
             n++;

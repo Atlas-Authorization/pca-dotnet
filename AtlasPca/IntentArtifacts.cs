@@ -30,7 +30,7 @@ internal static class IntentArtifacts
 
     internal static string? ClosedMembers(Dictionary<string, object?> o, string[] required, string[] optional, string where)
     {
-        foreach (var k in o.Keys) if (!required.Contains(k) && !optional.Contains(k)) return $"unknown member '{where}.{k}'";
+        foreach (var k in IntentJs.JsKeys(o.Keys)) if (!required.Contains(k) && !optional.Contains(k)) return $"unknown member '{where}.{k}'";
         foreach (var k in required) if (!o.ContainsKey(k)) return $"missing member '{where}.{k}'";
         return null;
     }
