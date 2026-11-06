@@ -1,0 +1,2047 @@
+{
+ "format": "pca-predicate-reasons/1",
+ "cases": [
+  {
+   "name": "lte",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "lte",
+       "value": 100
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 400
+     }
+    }
+   },
+   "reason": "amount <= 100 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "lt",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "lt",
+       "value": 100
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 400
+     }
+    }
+   },
+   "reason": "amount < 100 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "gt",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "gt",
+       "value": 100
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 4
+     }
+    }
+   },
+   "reason": "amount > 100 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "gte",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "gte",
+       "value": 100
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 4
+     }
+    }
+   },
+   "reason": "amount >= 100 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "eq string",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.currency",
+       "op": "eq",
+       "value": "usd"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "currency": "eur"
+     }
+    }
+   },
+   "reason": "currency == \"usd\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "ne",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.currency",
+       "op": "ne",
+       "value": "usd"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "currency": "usd"
+     }
+    }
+   },
+   "reason": "currency != \"usd\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "eq bool",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.live",
+       "op": "eq",
+       "value": true
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "live": false
+     }
+    }
+   },
+   "reason": "live == true not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "eq null",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.note",
+       "op": "eq",
+       "value": null
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "note": "x"
+     }
+    }
+   },
+   "reason": "note == null not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "in array",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.currency",
+       "op": "in",
+       "value": [
+        "usd",
+        "eur"
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "currency": "gbp"
+     }
+    }
+   },
+   "reason": "currency in [\"usd\", \"eur\"] not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "nin array",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.currency",
+       "op": "nin",
+       "value": [
+        "usd",
+        "eur"
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "currency": "usd"
+     }
+    }
+   },
+   "reason": "currency not in [\"usd\", \"eur\"] not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "in nine items",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.n",
+       "op": "in",
+       "value": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "n": 99
+     }
+    }
+   },
+   "reason": "n in [...] not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "in eight items",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.n",
+       "op": "in",
+       "value": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "n": 99
+     }
+    }
+   },
+   "reason": "n in [1, 2, 3, 4, 5, 6, 7, 8] not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "in nested array",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.n",
+       "op": "in",
+       "value": [
+        [
+         1
+        ],
+        [
+         2
+        ]
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "n": 99
+     }
+    }
+   },
+   "reason": "n in [<value>, <value>] not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "in object item",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.n",
+       "op": "in",
+       "value": [
+        {
+         "a": 1
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "n": 99
+     }
+    }
+   },
+   "reason": "n in [<value>] not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "in mixed",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.n",
+       "op": "in",
+       "value": [
+        1,
+        "a",
+        true,
+        null,
+        1.5
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "n": 99
+     }
+    }
+   },
+   "reason": "n in [1, \"a\", true, null, <number>] not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "exists present",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.approval",
+       "op": "exists"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": "approval present not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "exists absent",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.approval",
+       "op": "exists",
+       "value": false
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "approval": "x"
+     }
+    }
+   },
+   "reason": "approval absent not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "exists value true",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.approval",
+       "op": "exists",
+       "value": true
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": "approval present not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "ref",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "lte",
+       "ref": "env.cap"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 400
+     }
+    },
+    "env": {
+     "cap": 100
+    }
+   },
+   "reason": "amount <= env.cap not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "ref non-string",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "lte",
+       "ref": 5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 400
+     }
+    }
+   },
+   "reason": "amount <= <ref> not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "ref null",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "lte",
+       "ref": null
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 400
+     }
+    }
+   },
+   "reason": "amount <= <ref> not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "prefix",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.dest",
+       "op": "prefix",
+       "value": "acct_"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "dest": "x"
+     }
+    }
+   },
+   "reason": "dest starts with \"acct_\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "like",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.dest",
+       "op": "like",
+       "value": "acct_*"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "dest": "x"
+     }
+    }
+   },
+   "reason": "dest like \"acct_*\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "matches",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.dest",
+       "op": "matches",
+       "value": "^a+$"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "dest": "x"
+     }
+    }
+   },
+   "reason": "dest matches \"^a+$\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "is_a",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "subject.kind",
+       "op": "is_a",
+       "value": "admin"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    },
+    "subject": {
+     "kind": "user"
+    }
+   },
+   "reason": "subject.kind is a \"admin\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "member_of",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "subject.id",
+       "op": "member_of",
+       "value": "staff",
+       "collection": "env.groups"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    },
+    "subject": {
+     "id": "u1"
+    },
+    "env": {
+     "groups": {
+      "u1": [
+       "users"
+      ]
+     }
+    }
+   },
+   "reason": "subject.id member of \"staff\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "subject field kept",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "subject.role",
+       "op": "eq",
+       "value": "admin"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    },
+    "subject": {
+     "role": "user"
+    }
+   },
+   "reason": "subject.role == \"admin\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "env field kept",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "env.region",
+       "op": "eq",
+       "value": "eu"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    },
+    "env": {
+     "region": "us"
+    }
+   },
+   "reason": "env.region == \"eu\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "unknown op",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "between",
+       "value": [
+        1,
+        2
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 4
+     }
+    }
+   },
+   "reason": "amount <condition> not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "missing field is unknown",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "lte",
+       "value": 100
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": "amount <= 100 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "non-string field",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": 5,
+       "op": "eq",
+       "value": 1
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": "<field> == 1 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "long string 64",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.s",
+       "op": "eq",
+       "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "s": "b"
+     }
+    }
+   },
+   "reason": "s == \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "long string 65",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.s",
+       "op": "eq",
+       "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "s": "b"
+     }
+    }
+   },
+   "reason": "s == \"...\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "string with quote",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.s",
+       "op": "eq",
+       "value": "a\"b"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "s": "b"
+     }
+    }
+   },
+   "reason": "s == \"...\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "string with backslash",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.s",
+       "op": "eq",
+       "value": "a\\b"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "s": "b"
+     }
+    }
+   },
+   "reason": "s == \"...\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "string with newline",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.s",
+       "op": "eq",
+       "value": "a\nb"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "s": "b"
+     }
+    }
+   },
+   "reason": "s == \"...\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "string with emoji",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.s",
+       "op": "eq",
+       "value": "a😀b"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "s": "b"
+     }
+    }
+   },
+   "reason": "s == \"...\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "string with bmp unicode",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.s",
+       "op": "eq",
+       "value": "café €"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "s": "b"
+     }
+    }
+   },
+   "reason": "s == \"café €\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "non-integer number",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "lte",
+       "value": 1.5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 4
+     }
+    }
+   },
+   "reason": "amount <= <number> not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "big integer",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "lte",
+       "value": 9007199254740991
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 9007199254740992
+     }
+    }
+   },
+   "reason": "amount <= 9007199254740991 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "negative integer",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "gte",
+       "value": -5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": -9
+     }
+    }
+   },
+   "reason": "amount >= -5 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "object value",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.o",
+       "op": "eq",
+       "value": {
+        "a": 1
+       }
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "o": {
+       "a": 2
+      }
+     }
+    }
+   },
+   "reason": "o == <value> not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "all_of first unmet",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "all_of": [
+        {
+         "field": "action.params.a",
+         "op": "lte",
+         "value": 1
+        },
+        {
+         "field": "action.params.b",
+         "op": "lte",
+         "value": 2
+        },
+        {
+         "field": "action.params.c",
+         "op": "lte",
+         "value": 3
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 1,
+      "b": 9,
+      "c": 9
+     }
+    }
+   },
+   "reason": "b <= 2 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "all_of nested all_of",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "all_of": [
+        {
+         "field": "action.params.a",
+         "op": "lte",
+         "value": 1
+        },
+        {
+         "all_of": [
+          {
+           "field": "action.params.b",
+           "op": "lte",
+           "value": 2
+          },
+          {
+           "field": "action.params.c",
+           "op": "lte",
+           "value": 3
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 1,
+      "b": 2,
+      "c": 9
+     }
+    }
+   },
+   "reason": "c <= 3 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "all_of depth cap",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "all_of": [
+        {
+         "all_of": [
+          {
+           "all_of": [
+            {
+             "all_of": [
+              {
+               "all_of": [
+                {
+                 "all_of": [
+                  {
+                   "field": "action.params.a",
+                   "op": "lte",
+                   "value": 1
+                  }
+                 ]
+                }
+               ]
+              }
+             ]
+            }
+           ]
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 9
+     }
+    }
+   },
+   "reason": "all of (all of (a <= 1)) not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "all_of empty",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "all_of": []
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": "all of () not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "any_of",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "any_of": [
+        {
+         "field": "action.params.a",
+         "op": "lte",
+         "value": 1
+        },
+        {
+         "field": "action.params.b",
+         "op": "eq",
+         "value": "x"
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 9,
+      "b": "y"
+     }
+    }
+   },
+   "reason": "any of (a <= 1; b == \"x\") not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "any_of inside all_of",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "all_of": [
+        {
+         "field": "action.params.z",
+         "op": "lte",
+         "value": 5
+        },
+        {
+         "any_of": [
+          {
+           "field": "action.params.a",
+           "op": "lte",
+           "value": 1
+          },
+          {
+           "field": "action.params.b",
+           "op": "eq",
+           "value": "x"
+          }
+         ]
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "z": 1,
+      "a": 9,
+      "b": "y"
+     }
+    }
+   },
+   "reason": "any of (a <= 1; b == \"x\") not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "not",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "not": {
+        "field": "action.params.a",
+        "op": "eq",
+        "value": 1
+       }
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 1
+     }
+    }
+   },
+   "reason": "not (a == 1) not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "not any_of",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "not": {
+        "any_of": [
+         {
+          "field": "action.params.a",
+          "op": "eq",
+          "value": 1
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 1
+     }
+    }
+   },
+   "reason": "not (any of (a == 1)) not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "not any_of all_of depth 2",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "not": {
+        "any_of": [
+         {
+          "all_of": [
+           {
+            "field": "action.params.a",
+            "op": "eq",
+            "value": 1
+           }
+          ]
+         }
+        ]
+       }
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 1
+     }
+    }
+   },
+   "reason": "not (any of ((...))) not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "any_of ten children",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "any_of": [
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 0
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 1
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 2
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 3
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 4
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 5
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 6
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 7
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 8
+        },
+        {
+         "field": "action.params.a",
+         "op": "eq",
+         "value": 9
+        }
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "any of (a == 0; a == 1; a == 2; a == 3; a == 4; a == 5; a == 6; a == 7) not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "not with array operand",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "not": [
+        1
+       ]
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": "not (<field> <condition>) not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "any_of not an array",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "any_of": 5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": "<condition> not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "group without kind array",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "all_of": 5,
+       "not": {
+        "field": "action.params.a",
+        "op": "eq",
+        "value": 1
+       }
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 1
+     }
+    }
+   },
+   "reason": "not (a == 1) not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "second condition unmet",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 5
+      },
+      {
+       "field": "action.params.b",
+       "op": "lte",
+       "value": 5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 1,
+      "b": 9
+     }
+    }
+   },
+   "reason": "b <= 5 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "first in-scope predicate wins",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 5
+      }
+     ]
+    },
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 50
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "a <= 5 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "out-of-scope predicate skipped",
+   "predicates": [
+    {
+     "verb": "pay.refund",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 5
+      }
+     ]
+    },
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 50
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "a <= 50 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "resource prefix scope",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/*",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "a <= 5 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "verb list scope",
+   "predicates": [
+    {
+     "verb": [
+      "pay.refund",
+      "pay.send"
+     ],
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "a <= 5 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "wildcard verb",
+   "predicates": [
+    {
+     "verb": "*",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "a <= 5 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "scope not matching verb",
+   "predicates": [
+    {
+     "verb": "pay.refund",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "no predicate permits pay.send on pay/acme"
+  },
+  {
+   "name": "scope not matching resource",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "other/x",
+     "where": [
+      {
+       "field": "action.params.a",
+       "op": "lte",
+       "value": 5
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "no predicate permits pay.send on pay/acme"
+  },
+  {
+   "name": "where not an array",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": 5
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "no predicate permits pay.send on pay/acme"
+  },
+  {
+   "name": "empty list",
+   "predicates": [],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 99
+     }
+    }
+   },
+   "reason": "envelope grants no predicates"
+  },
+  {
+   "name": "field with only prefix",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.",
+       "op": "eq",
+       "value": 1
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": " == 1 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "nested field name",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.a.b",
+       "op": "lte",
+       "value": 1
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": {
+       "b": 5
+      }
+     }
+    }
+   },
+   "reason": "a.b <= 1 not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "action field kept",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.verb",
+       "op": "eq",
+       "value": "other"
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {}
+    }
+   },
+   "reason": "action.verb == \"other\" not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "not not not at depth 2",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "not": {
+        "not": {
+         "not": {
+          "field": "action.params.a",
+          "op": "eq",
+          "value": 1
+         }
+        }
+       }
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "a": 1
+     }
+    }
+   },
+   "reason": "not (not ((...))) not satisfied for pay.send on pay/acme"
+  },
+  {
+   "name": "unsafe integer operand",
+   "predicates": [
+    {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "where": [
+      {
+       "field": "action.params.amount",
+       "op": "gte",
+       "value": 9007199254740992
+      }
+     ]
+    }
+   ],
+   "ctx": {
+    "action": {
+     "verb": "pay.send",
+     "resource": "pay/acme",
+     "params": {
+      "amount": 5
+     }
+    }
+   },
+   "reason": "amount >= <number> not satisfied for pay.send on pay/acme"
+  }
+ ]
+}

@@ -1,0 +1,66 @@
+[
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Equality mutation: hs.Count != 1",
+  "line": "if (hs.Count == 1) return hs[0];",
+  "occurrence": 1,
+  "reason": "Build with `hs.Count != 1`: a one-element list no longer returns, Split(1) is 1, so Build(hs.GetRange(0, 1)) calls itself on the same one-element list without end and the stack overflows, which ends the test host. The unmutated recursion stops at the one-element list; the unmutated suite passes under the same limits in every shard. A stack overflow cannot be caught in .NET, so no assertion can decide this mutant."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/IntentAcc.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "for (long i = 1; i <= w; i++) output.Add(\"pending:\" + i);",
+  "occurrence": 1,
+  "reason": "With `i--` and w >= 1, i goes 1, 0, -1 and so on, so `i <= w` stays true (until long underflow, far past memory) and output.Add appends without end until the 3 GiB heap cap throws OutOfMemoryException. The unmutated loop stops after w additions, and the unmutated suite passes under the same cap in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Issue.cs",
+  "mutant": "Equality mutation: hs.Count != 1",
+  "line": "if (hs.Count == 1) return;",
+  "occurrence": 1,
+  "reason": "Prove with `hs.Count != 1`: a one-element list no longer returns, Pca.Split(1) is 1, so Prove recurses on hs.GetRange(0, 1) without end and the stack overflows, which ends the test host. The unmutated recursion stops at one element; the unmutated suite passes under the same limits in every shard. A stack overflow cannot be caught in .NET."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Actions.cs",
+  "mutant": "Equality mutation: hs.Count != 1",
+  "line": "if (hs.Count == 1) return hs[0];",
+  "occurrence": 1,
+  "reason": "SubRoot with `hs.Count != 1`: a one-element list no longer returns, Split(1) is 1, so SubRoot recurses on hs.GetRange(0, 1) without end and the stack overflows, which ends the test host. The unmutated recursion stops at one element; the unmutated suite passes under the same limits in every shard. A stack overflow cannot be caught in .NET."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Arithmetic mutation: i * hs.Stores.Count",
+  "line": "var (ok, err) = Claim(hs.Stores[i % hs.Stores.Count], key, counter);",
+  "occurrence": 1,
+  "reason": "`i * Count` indexes past the store list for every i >= 1, on a Race worker thread, and an unhandled exception on that thread ends the test host. The unmutated `i % Count` is always in range, and the unmutated suite passes in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Arithmetic mutation: n * hs.Stores.Count",
+  "line": "if (Claim(hs.Stores[n % hs.Stores.Count], key2, baseCounter + n).Ok) Volatile.Write(ref admitted[n], 1);",
+  "occurrence": 1,
+  "reason": "`n * Count` indexes past the store list for every n >= 1, on a Race worker thread, and an unhandled exception on that thread ends the test host. The unmutated `n % Count` is always in range, and the unmutated suite passes in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 13,
+  "reason": "Block removal of OpenN's try body: no store is opened, so hs.Stores is empty and the first `i % hs.Stores.Count` on a Race worker thread throws DivideByZeroException, unhandled there, which ends the test host. The unmutated body opens n stores, and the unmutated suite passes in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 14,
+  "reason": "Block removal of OpenN's catch body: when Open throws the error is swallowed and hs.Stores stays short or empty, so `i % hs.Stores.Count` on a Race worker thread throws DivideByZeroException, unhandled there, which ends the test host. The unmutated catch rethrows on the calling thread, and the unmutated suite passes in every shard."
+ }
+]

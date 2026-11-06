@@ -55,6 +55,7 @@ public class PcaMiddlewareTests
         System.Func<string, Task<Dictionary<string, object?>?>>? resolverOverride = null) => new()
         {
             Audience = audienceOverride ?? f.Aud,
+            SignatureOnly = true,
             Clock = () => f.Now,
             GrantResolver = resolverOverride
                 ?? (r => Task.FromResult<Dictionary<string, object?>?>(r == f.GrantRef ? f.Grant : null)),

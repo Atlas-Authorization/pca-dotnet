@@ -154,9 +154,9 @@ public static class OracleFacts
         NonEmpty(IntentJs.Get(committed, "facts")) || IntentJs.Get(committed, "offer_set") is string
         || NonEmpty(IntentJs.Get(policy, "worlds")) || NonEmpty(IntentJs.Get(policy, "relational")) || IntentJs.Get(policy, "offers") is D;
 
-    static object? Prop(object? o, string k) => o == null ? throw new ArgumentException("cannot read '" + k + "' of null") : IntentJs.Get(o, k);
+    internal static object? Prop(object? o, string k) => o == null ? throw new ArgumentException("cannot read '" + k + "' of null") : IntentJs.Get(o, k);
 
-    static string? SubjectOf(object? action, string path)
+    internal static string? SubjectOf(object? action, string path)
     {
         if (path == "action.resource") return Prop(action, "resource") as string;
         if (path == "action.verb") return Prop(action, "verb") as string;
@@ -282,7 +282,7 @@ public static class OracleFacts
     }
 
     /// <summary><c>input.action.params</c> (absent = {}); a missing action or a present non-object params fails closed.</summary>
-    static D ActionParamsOf(D input) =>
+    internal static D ActionParamsOf(D input) =>
         IntentArtifacts.ActionParams(IntentJs.Get(input, "action") ?? throw new ArgumentException("no action"));
 
     static long? Operand(D world, D input, string path)
