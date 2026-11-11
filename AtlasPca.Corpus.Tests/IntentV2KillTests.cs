@@ -28,7 +28,10 @@ public partial class IntentV2KillTests
     internal static string B64Seed(string label) => Pca.B64u(Seed(label));
 
     const string PRINCIPAL = "v2/principal", AGENT = "v2/agent", SITE = "v2/site", SEQ_ROOT = "v2/sequencer-root", SEQ_KEY = "v2/sequencer", STRANGER = "v2/stranger";
-    static readonly string REF = B64Seed("v2/ref"), MAP0 = B64Seed("v2/map0"), MAP1 = B64Seed("v2/map1"), SESSION = B64Seed("v2/session");
+    static string REF => B64Seed("v2/ref");
+    static string MAP0 => B64Seed("v2/map0");
+    static string MAP1 => B64Seed("v2/map1");
+    static string SESSION => B64Seed("v2/session");
 
     static D UnsignedSchema() => M("v", 1L, "kind", "pca-action-schema", "site", "https://skyair.example", "aud", AUD, "version", "2026-10-01",
         "units", M("usd_cents", M("kind", "money", "currency", "USD", "exponent", 2L)),
@@ -52,9 +55,9 @@ public partial class IntentV2KillTests
         s["sig"] = M("alg", "ed25519", "kid", kid, "value", Sign(key, IntentJs.Message(ActionSchema.ActionSchemaDomain, unsigned)));
         return s;
     }
-    static readonly D SCHEMA = SignSchema(UnsignedSchema(), "skyair-2026", SITE);
-    static readonly L KEYS = Li(M("kid", "skyair-2026", "alg", "ed25519", "pk", Pub(SITE)));
-    static readonly string SD = ActionSchema.Digest(SCHEMA);
+    static D SCHEMA => SignSchema(UnsignedSchema(), "skyair-2026", SITE);
+    static L KEYS => Li(M("kid", "skyair-2026", "alg", "ed25519", "pk", Pub(SITE)));
+    static string SD => ActionSchema.Digest(SCHEMA);
 
     static D Trip() => M("id", "trip_spend", "agg", "sum", "unit", "usd_cents", "sel", M("accumulates_into", "spend.usd_cents"), "win", M("kind", "task"), "key", null,
         "domain_max", 500_000L, "holder", M("kind", "site_local"));
@@ -69,8 +72,8 @@ public partial class IntentV2KillTests
         s["sig"] = Sign(key, IntentJs.Message(IntentSession.IntentSessionSigDomain, s));
         return s;
     }
-    internal static readonly D S = SignRoot(RootBody(), PRINCIPAL);
-    static readonly string R = IntentSession.RootDigest(S);
+    internal static D S => SignRoot(RootBody(), PRINCIPAL);
+    static string R => IntentSession.RootDigest(S);
 
     static D Mint(long seq, string? prev, string map, string salt, string signer, string root)
     {
@@ -82,8 +85,8 @@ public partial class IntentV2KillTests
         var msg = Pca.Concat(Encoding.UTF8.GetBytes("atlas-pca/cap/v1\0"), Pca.B64uDecode(digest, 32)!);
         return M("id", digest, "issuer", Pub(signer), "holder", Pub(AGENT), "caveats", body["caveats"], "body_digest", digest, "sig", Sign(signer, msg));
     }
-    static readonly D G0 = Mint(0, null, MAP0, "salt0", PRINCIPAL, R);
-    static readonly D D1 = Mint(1, (string)G0["id"]!, MAP1, "salt1", PRINCIPAL, R);
+    static D G0 => Mint(0, null, MAP0, "salt0", PRINCIPAL, R);
+    static D D1 => Mint(1, (string)G0["id"]!, MAP1, "salt1", PRINCIPAL, R);
 
     static D Params() => M("offer_id", "OF-1", "total", 38_900L, "add_ons", Li("none"), "refundable", false);
 
@@ -110,8 +113,8 @@ public partial class IntentV2KillTests
         foreach (var (k, v) in M(over)) c[k] = v;
         return c;
     }
-    static Verdict Verify(D grant, D p, object? ctx) => Pca.VerifyPcactnCore(p, grant, NOW, AUD, null, null, IntentV2Context.FromJson(ctx));
-    static readonly string[] CORE = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter", "intent" };
+    static Verdict Verify(D grant, D p, object? ctx) => Pca.VerifyPcactnCore(p, grant, NOW, AUD, null, null, IntentV2Context.FromJson(ctx), planRoots: PlanRootPolicy.Skip);
+    static readonly string[] CORE = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format", "intent" };
     static List<string> Keys(params string[] extra) => CORE.Concat(extra).ToList();
     static List<string> Failed(Verdict v) => v.Checks.Where(e => !e.Value).Select(e => e.Key).ToList();
 
@@ -136,7 +139,7 @@ public partial class IntentV2KillTests
         var v = Verify(G0, plain, Ctx());
         Assert.Equal(CORE, v.Checks.Keys);
         Assert.Equal(new[] { "intent" }, Failed(v));
-        Assert.Equal(CORE, Pca.VerifyPcactnCore(plain, G0, NOW, AUD, null, null, null).Checks.Keys);
+        Assert.Equal(CORE, Pca.VerifyPcactnCore(plain, G0, NOW, AUD, null, null, null, planRoots: PlanRootPolicy.Skip).Checks.Keys);
         var req = Verify(G0, plain, Ctx("policy", M("session", M("require", true))));
         Assert.Equal(Keys("intent_session"), req.Checks.Keys.ToList());
         Assert.Equal(CORE, Verify(G0, plain, Ctx("policy", M("session", M("require", false)))).Checks.Keys);
@@ -242,7 +245,7 @@ public partial class IntentV2KillTests
 
     // ---- revocation ----
     const string REV = "v2/revocation-authority";
-    static readonly string ID_SESSION = IntentRevocation.SessionRevocationId(SESSION);
+    static string ID_SESSION => IntentRevocation.SessionRevocationId(SESSION);
     static List<string> Sorted(List<string> xs) { var s = new List<string>(xs); s.Sort(IntentJs.CompareUtf8); return s; }
     static D Epoch(List<string> revoked, long issued, string signer, string scope)
     {

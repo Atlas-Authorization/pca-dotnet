@@ -27,9 +27,8 @@ public static class IntentMap
     public const int MaxMapCuts = 256;
     public const int MaxMapValues = 256;
     public const int MaxMapStringBytes = 256;
-    internal static readonly string[] MetricFields =
-        { "residual_risk_ppm", "burden_ppm", "uncertainty_ppm", "disagreement_ppm", "mean_harm_ppm", "fidelity_est_ppm", "entropy_mbits", "questions", "conflicts" };
-    static readonly Regex PathRe = new(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
+    internal static string[] MetricFields => new string[] { "residual_risk_ppm", "burden_ppm", "uncertainty_ppm", "disagreement_ppm", "mean_harm_ppm", "fidelity_est_ppm", "entropy_mbits", "questions", "conflicts" };
+    static Regex PathRe => Rx.Get(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
 
     /// <summary>The Z0 verdict: when <c>Ok</c>, the action's cell indices, its <c>p_ppm</c> and the committed residual risk.</summary>
     public sealed class Decision

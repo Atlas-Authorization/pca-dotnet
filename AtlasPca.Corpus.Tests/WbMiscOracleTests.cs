@@ -19,7 +19,10 @@ public class WbMiscOracleTests
         ["lift/cls/content-too-deep"] = "classes: evaluation error (fail closed): ",
     };
 
-    static readonly Lazy<L> Cases = new(() =>
+    static readonly string CasesText = LoadText();
+    static L Cases => (L)((D)Pca.ParseJson(CasesText)!)["cases"]!;
+
+    static string LoadText()
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
@@ -29,10 +32,10 @@ public class WbMiscOracleTests
             if (!File.Exists(f)) continue;
             using var gz = new GZipStream(File.OpenRead(f), CompressionMode.Decompress);
             using var sr = new StreamReader(gz, new UTF8Encoding(false));
-            return (L)((D)Pca.ParseJson(sr.ReadToEnd())!)["cases"]!;
+            return sr.ReadToEnd();
         }
         throw new FileNotFoundException("test-data/k042-wbmisc.json.gz");
-    });
+    }
 
     static D Got(IntentWB.Result r) => new()
     {
@@ -49,7 +52,7 @@ public class WbMiscOracleTests
     static int Run(params string[] prefixes)
     {
         var bad = new List<string>(); int n = 0;
-        foreach (D c in Cases.Value)
+        foreach (D c in Cases)
         {
             var name = (string)c["name"]!;
             if (!prefixes.Any(p => name.StartsWith(p, StringComparison.Ordinal))) continue;
@@ -82,8 +85,9 @@ public class WbMiscOracleTests
     public void EveryCaseIsRun()
     {
         int total = 0;
+        var cases = Cases;
         foreach (var p in new[] { "ctx/", "wb/", "lift/world/", "lift/prov/", "lift/cls/", "drop-", "other-", "then-" })
-            total += Cases.Value.Count(o => ((string)((D)o!)["name"]!).StartsWith(p, StringComparison.Ordinal));
-        Assert.Equal(Cases.Value.Count, total);
+            total += cases.Count(o => ((string)((D)o!)["name"]!).StartsWith(p, StringComparison.Ordinal));
+        Assert.Equal(cases.Count, total);
     }
 }

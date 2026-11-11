@@ -24,7 +24,7 @@ public static class Caveats
     /// unsatisfied types, in order (<c>"&lt;malformed&gt;"</c> when a caveat's type is not a string).</summary>
     public sealed record Result(bool Ok, IReadOnlyList<string> Failed);
 
-    static readonly string[] ReversibilityOrder = { "reversible", "rate_limited", "irreversible" };
+    static string[] ReversibilityOrder => new string[] { "reversible", "rate_limited", "irreversible" };
 
     /// <summary>The ROOT grant's caveats the policy layer evaluates: <c>grant.caveats</c> without its FIRST <c>envelope</c>
     /// caveat (order kept; a second envelope stays and is unsatisfied). A non-list <c>caveats</c> is returned as is (and refused

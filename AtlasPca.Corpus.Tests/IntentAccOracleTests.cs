@@ -11,8 +11,11 @@ namespace AtlasPca.Corpus.Tests;
 /// tools/pca-audit/java-mutate/k042-intentacc-oracle.mjs; every case compares the EXACT reason / verdict / value as canonical JSON.</summary>
 public class IntentAccOracleTests
 {
-    static readonly Lazy<L> Cases = new(() =>
+    // parsed per access (one access per test): a mutant in the parser must not poison a process-wide cache
+    static L Cases
     {
+        get
+        {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
         {
@@ -21,14 +24,15 @@ public class IntentAccOracleTests
             if (File.Exists(f)) return (L)Pca.ParseJson(File.ReadAllText(f, new UTF8Encoding(false)))!;
         }
         throw new FileNotFoundException("test-data/k042-intentacc.json");
-    });
+        }
+    }
 
     static L Args(D c) => (L)c["args"]!;
     static D M(object? o) => (D)o!;
     static string S(object? o) => (string)o!;
     static double Dbl(object? o) => IntentJs.NumOf(o)!.Value;
 
-    static object? ToJson(object? o) => o switch
+    internal static object? ToJson(object? o) => o switch
     {
         long v => new Num(v.ToString()),
         int v => new Num(v.ToString()),
@@ -39,10 +43,10 @@ public class IntentAccOracleTests
         _ => o,
     };
 
-    static void Run(string fn, Func<L, object?> f)
+    internal static void Run(string fn, Func<L, object?> f, L? cases = null)
     {
         var bad = new List<string>(); int n = 0;
-        foreach (D c in Cases.Value)
+        foreach (D c in cases ?? Cases)
         {
             if ((string)c["fn"]! != fn) continue;
             n++;
@@ -55,7 +59,7 @@ public class IntentAccOracleTests
         Assert.True(bad.Count == 0, $"{bad.Count}/{n} {fn} cases differ from the TS reference:\n  " + string.Join("\n  ", bad.Take(40)));
     }
 
-    [Fact] public void CorpusLoaded() => Assert.True(Cases.Value.Count > 1500);
+    [Fact] public void CorpusLoaded() => Assert.True(Cases.Count > 1500);
     [Fact] public void AccumulatorDeclError() => Run("accumulatorDeclError", a => IntentAcc.AccumulatorDeclError(a[0]));
     [Fact] public void MonitorDeclError() => Run("monitorDeclError", a => IntentAcc.MonitorDeclError(a[0]));
     [Fact] public void MonitorStates() => Run("monitorStates", a => IntentAcc.MonitorStates(M(a[0])));

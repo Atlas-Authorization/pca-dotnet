@@ -10,7 +10,7 @@ namespace AtlasPca.Corpus.Tests;
 /// (classifiers), the W-B unit and its activity (mirrors IntentWbKillTest.java), plus the predicate DSL and the regex engine.</summary>
 public class IntentWbKillTests
 {
-    static readonly string SESSION = B64Seed("wb/session");
+    static string SESSION => B64Seed("wb/session");
 
     static D Signed(string domain, D body, string key) { var a = new D(body) { ["sig"] = Sign(key, IntentJs.Message(domain, body)) }; return a; }
     static D Fact(string name, string subject, object value, long tObs, string oracle, string key) =>
