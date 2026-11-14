@@ -9,15 +9,21 @@ collateral mutants are reported CompileError and never tested (about a quarter o
 mutant is applied alone to a clean copy of the source, built, and run against the oracle test project.
 
   python3 stryker-isolate.py --src <dotnet-pca dir> --mutants <json> --out <json> [--jobs 4] [--filter <dotnet test filter>]
-                             [--timeout <s>] [--work <dir>] [--stop-on-fail]
+                             [--timeout <s>] [--work <dir>] [--stop-on-fail] [--deadline <unix time>]
 
 <json>: [{id, file: "AtlasPca/X.cs", start: {line, column}, end: {line, column}, replacement, ...}] (1-based columns, end
 exclusive: the Stryker report's location). Output: the same records plus "status": CompileError | Killed | Survived | Timeout
-(and "detail": the first compiler error / failing test). Worker copies live in <work>/w<k> (default <src>/.mutwork), which
+(and "detail": the first compiler error / failing test), RunError (the tests failed but no assertion decided the mutant: the
+test host crashed or aborted, or every failing test hit OutOfMemoryException under the 3 GiB heap cap - the oracle's
+RunErrorProbe logs each OOM to $PCA_RUNERR_LOG; "detail" = the evidence; a run error needs a per-mutant ledger reason), or
+Untested: a mutant not started before --deadline (the caller must count it as not passed). Worker copies live in <work>/w<k> (default <src>/.mutwork), which
 must sit below the monorepo root (the oracle finds packages/pca/conformance by walking up from its bin directory).
-A test host is capped at a 3 GiB GC heap (DOTNET_GCHeapHardLimit), so an unbounded-allocation mutant dies alone (Killed)."""
-import argparse, json, os, re, shutil, subprocess, sys, threading, time
+A test host is capped at a 3 GiB GC heap (DOTNET_GCHeapHardLimit), so an unbounded-allocation mutant dies alone - as a RunError,
+never a kill."""
+import argparse, json, os, re, shutil, signal, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from stryker_procs import sh, watchdog_hits, reclassify
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--src", required=True)
@@ -27,53 +33,119 @@ ap.add_argument("--jobs", type=int, default=4)
 ap.add_argument("--filter", default="Category!=Huge")
 ap.add_argument("--timeout", type=int, default=0, help="per-mutant test timeout in seconds (0 = 3x the baseline run + 60)")
 ap.add_argument("--work", default=None)
+ap.add_argument("--deadline", type=float, default=0, help="unix time after which no mutant is started (they are Untested)")
+ap.add_argument("--watchdog-log", default="", help="kill log of scripts/watchdog.sh: a mutant whose test run saw a kill is a RunError, never Killed")
 ap.add_argument("--stop-on-fail", action="store_true", help="xUnit.StopOnFail: a killed mutant stops at its first failing test")
 a = ap.parse_args()
 
 src = os.path.abspath(a.src)
 work = os.path.abspath(a.work or os.path.join(src, ".mutwork"))
 TEST = "AtlasPca.Corpus.Tests"
+# the kill set: the corpus project plus the Authorize / executor / middleware tests (they exercise Authorize.cs, Executor.cs, ...)
+TESTS = [TEST, "AtlasPca.AspNetCore.Tests"]
 muts = json.load(open(a.mutants))
 for m in muts:
     for k in ("file", "start", "end", "replacement"):
         if k not in m:
             sys.exit(f"mutant without '{k}': {json.dumps(m)[:200]}")
 
-def sh(cmd, cwd, timeout=None, env=None):
-    t = time.time()
-    try:
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
-        return r.returncode, r.stdout + r.stderr, time.time() - t
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        return None, out, time.time() - t
-
 def copy_tree(dst):
     if os.path.exists(dst):
         shutil.rmtree(dst)
     os.makedirs(dst)
-    for d in ("AtlasPca", TEST):
+    for d in ("AtlasPca", "AtlasPca.AspNetCore", *TESTS):
         shutil.copytree(os.path.join(src, d), os.path.join(dst, d), ignore=shutil.ignore_patterns("bin", "obj", "StrykerOutput", ".mutwork"))
     for f in ("global.json",):
         if os.path.exists(os.path.join(src, f)):
             shutil.copy(os.path.join(src, f), dst)
 
 TEST_ENV = dict(os.environ, DOTNET_GCHeapHardLimit="0xC0000000")
-test_cmd = ["dotnet", "test", "-c", "Release", "--no-build", "--nologo", "--filter", a.filter]
-if a.stop_on_fail:
-    test_cmd += ["--", "xUnit.StopOnFail=true"]
+# normal verbosity + xUnit's long-running-test diagnostic: a run that times out names the test(s) that were still running
+DIAG = ["xUnit.LongRunningTestSeconds=60", "xUnit.DiagnosticMessages=true"]
+test_cmd = ["dotnet", "test", "-c", "Release", "--no-build", "--nologo", "--filter", a.filter, "--logger", "console;verbosity=normal"]
+full_cmd = test_cmd + ["--"] + DIAG
+test_cmd = test_cmd + ["--"] + (["xUnit.StopOnFail=true"] if a.stop_on_fail else []) + DIAG
 
+LONG = re.compile(r"\[Long Running Test\]\s*'([^']+)'")
+def running(out):
+    """The tests xUnit reported as still running when the limit hit (first three, shortened)."""
+    names = []
+    for m in LONG.finditer(out or ""):
+        n = m.group(1).replace("AtlasPca.Corpus.Tests.", "")
+        if n not in names:
+            names.append(n)
+    return (" still running: " + "; ".join(names[:3])[:150]) if names else " no long-running test reported"
+
+def build_all(w, extra):
+    for t in TESTS:
+        rc, out, _ = sh(["dotnet", "build", "-c", "Release", "--nologo", "-v", "q"] + extra, os.path.join(w, t))
+        if rc != 0:
+            return rc, out
+    return 0, ""
+
+def runerr_log(w):
+    return os.path.join(w, "runerr.log")
+
+def test_all(w, timeout=None, cmd=None):
+    """Run every test project; the first failure (or timeout) decides. OOM evidence goes to <w>/runerr.log (truncated first)."""
+    total = 0.0
+    open(runerr_log(w), "w").close()
+    env = dict(TEST_ENV, PCA_RUNERR_LOG=runerr_log(w))
+    for t in TESTS:
+        rc, out, secs = sh(cmd or test_cmd, os.path.join(w, t), timeout=timeout, env=env)
+        total += secs
+        if rc != 0:
+            return rc, out, total
+    return 0, "", total
+
+FAILED = re.compile(r"^\s*Failed (\S+?)(?:\(.*)? \[", re.M)
+def failures(out):
+    """{failed test -> its VSTest block}: the test's 'Failed' line up to the next one."""
+    ms = list(FAILED.finditer(out))
+    return {m.group(1): out[m.start(): ms[i + 1].start() if i + 1 < len(ms) else len(out)] for i, m in enumerate(ms)}
+
+def classify(w, rc, out, timeout):
+    """Killed only when some test failed on its own assertion; RunError when the host crashed / aborted (no failed test) or
+    every failed test is an OutOfMemoryException one (the heap cap, not a test, decided). Re-run without StopOnFail first, so
+    an OOM test that stopped the run early cannot hide a later assertion failure."""
+    fails = failures(out)
+    oom = {l.split(" ", 1)[1].strip() for l in open(runerr_log(w)).read().splitlines() if l.startswith("OOM ")}
+    if fails and not oom and not any("OutOfMemoryException" in b for b in fails.values()):
+        return "Killed", next(iter(fails))[:200]
+    if a.stop_on_fail:
+        rc2, out2, _ = test_all(w, timeout, full_cmd)
+        if rc2 is None:
+            return "Timeout", f">{timeout}s (full re-run)" + running(out2)
+        if rc2 == 0:
+            return "RunError", "flaky: failed with StopOnFail, passed on the full re-run"
+        fails = failures(out2)
+        oom = {l.split(" ", 1)[1].strip() for l in open(runerr_log(w)).read().splitlines() if l.startswith("OOM ")}
+        out = out2
+    real = [t for t, b in fails.items() if "OutOfMemoryException" not in b and not any(t == o or t.startswith(o + ".") for o in oom)]
+    if real:
+        return "Killed", real[0][:200]
+    if not fails:
+        crash = next((l.strip() for l in out.split("\n") if re.search(r"(?i)test host process crashed|test run aborted|stack overflow|aborted", l)), "no failed test")
+        return "RunError", ("crash: " + crash)[:200]
+    return "RunError", ("OutOfMemoryException: " + ", ".join(sorted(fails)))[:200]
+
+late = lambda: a.deadline and time.time() > a.deadline
+if late():
+    json.dump([dict(m, status="Untested", detail="deadline") for m in muts], open(a.out, "w"), indent=1)
+    sys.exit(print(f"{len(muts)} mutant(s) Untested: the deadline passed before the one-by-one tests started", flush=True))
 jobs = max(1, min(a.jobs, len(muts))) if muts else 0
 workers = [os.path.join(work, f"w{k}") for k in range(jobs)]
 base_secs = []
 def prepare(w):
     copy_tree(w)
-    rc, out, _ = sh(["dotnet", "build", "-c", "Release", "--nologo", "-v", "q"], os.path.join(w, TEST))
+    rc, out = build_all(w, [])
     if rc != 0:
         sys.exit(f"{w}: the unmutated source does not build:\n{out[-3000:]}")
-    rc, out, secs = sh(test_cmd, os.path.join(w, TEST), env=TEST_ENV)
+    rc, out, secs = test_all(w)
     if rc != 0:
         sys.exit(f"{w}: the oracle fails on the unmutated source:\n{out[-3000:]}")
+    if os.path.getsize(runerr_log(w)):
+        sys.exit(f"{w}: the unmutated source hits OutOfMemoryException under the heap cap:\n{open(runerr_log(w)).read()[:2000]}")
     base_secs.append(secs)
 with ThreadPoolExecutor(jobs or 1) as ex:
     list(ex.map(prepare, workers))
@@ -86,7 +158,10 @@ def offset(lines, line, col):
 free = list(workers)
 lock = threading.Lock()
 done = [0]
-def run(m):
+def run(m, tmo=None):
+    tmo = tmo or timeout
+    if late():
+        return dict(m, status="Untested", detail="deadline")
     with lock:
         w = free.pop()
     try:
@@ -96,20 +171,23 @@ def run(m):
         s, e = offset(lines, m["start"]["line"], m["start"]["column"]), offset(lines, m["end"]["line"], m["end"]["column"])
         try:
             open(p, "w", encoding="utf-8").write(orig[:s] + m["replacement"] + orig[e:])
-            rc, out, _ = sh(["dotnet", "build", "-c", "Release", "--no-restore", "--nologo", "-v", "q"], os.path.join(w, TEST))
+            rc, out = build_all(w, ["--no-restore"])
             if rc != 0:
                 err = next((l.strip() for l in out.split("\n") if ": error " in l), "?")
                 st, det = "CompileError", re.sub(r"\s*\[[^\]]*\.csproj\]$", "", err)[-200:]
             else:
-                rc, out, secs = sh(test_cmd, os.path.join(w, TEST), timeout=timeout, env=TEST_ENV)
+                t_run = time.time()
+                rc, out, secs = test_all(w, tmo)
                 if rc is None:
-                    st, det = "Timeout", f">{timeout}s"
+                    st, det = "Timeout", f">{tmo}s" + running(out)
                 elif rc != 0:
-                    st, det = "Killed", next((l.strip() for l in out.split("\n") if l.strip().startswith("Failed ")), f"rc {rc}")[:200]
+                    st, det = classify(w, rc, out, tmo)
                 else:
                     st, det = "Survived", f"{secs:.0f}s"
         finally:
             open(p, "w", encoding="utf-8").write(orig)
+        if st not in ("CompileError", "Untested"):
+            st, det = reclassify(st, det, watchdog_hits(a.watchdog_log, w, t_run))
         r = dict(m, status=st, detail=det)
     finally:
         with lock:
@@ -121,6 +199,37 @@ def run(m):
 
 with ThreadPoolExecutor(jobs or 1) as ex:
     res = list(ex.map(run, muts))
+
+# A Timeout of the parallel pass can be the workers starving each other (CPU and memory), not the mutant: run each one again
+# ALONE, one worker at a time, with the limit taken from a solo baseline. Only a mutant that still times out stays a Timeout.
+if jobs > 1 and any(r["status"] == "Timeout" for r in res):
+    w0 = workers[0]
+    # w0 still holds the last mutant's binaries (tests run --no-build): rebuild the restored source before timing it
+    rc, out = build_all(w0, ["--no-restore"])
+    solo = None
+    if rc != 0:
+        print(f"solo re-run SKIPPED, the unmutated source does not build: {out[-600:]}", flush=True)
+    else:
+        rc, out, secs = test_all(w0, 3 * int(max(base_secs or [60])) + 60)
+        if rc == 0:
+            solo = secs
+        else:
+            print(f"solo re-run SKIPPED, the unmutated oracle {'passed its limit' if rc is None else 'fails'} alone: {out[-600:]}", flush=True)
+    if solo is not None:
+        tmo2 = int(3 * solo + 60)  # solo run, no contention: the 3x margin is the real one
+        free[:] = [w0]
+        todo = [i for i, r in enumerate(res) if r["status"] == "Timeout"]
+        print(f"solo baseline {solo:.0f}s, serial re-run of {len(todo)} timed-out mutant(s), each at most {tmo2}s", flush=True)
+        for n, i in enumerate(todo, 1):
+            r = res[i]
+            if late():
+                print(f"solo re-run stopped at the deadline: {len(todo) - n + 1} left keep their first Timeout", flush=True)
+                break
+            print(f"solo {n}/{len(todo)} start {r['file']}:{r['start']['line']} {r.get('mutatorName', '')}", flush=True)
+            m = {k: v for k, v in r.items() if k not in ("status", "detail")}
+            r2 = run(m, tmo2)
+            print(f"solo {n}/{len(todo)} end   {r2['status']} {r2['detail'][:100]}", flush=True)
+            res[i] = r2 if r2["status"] != "Untested" else r
 json.dump(res, open(a.out, "w"), indent=1)
 from collections import Counter
 print(dict(Counter(r["status"] for r in res)), flush=True)

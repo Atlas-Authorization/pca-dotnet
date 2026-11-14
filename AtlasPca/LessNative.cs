@@ -20,7 +20,7 @@ public static class LessNative
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     delegate nuint SizeFn();
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    delegate int VerifyFn(byte[] pk, nuint pkLen, byte[] msg, nuint msgLen, byte[] sig, nuint sigLen);
+    internal delegate int VerifyFn(byte[] pk, nuint pkLen, byte[] msg, nuint msgLen, byte[] sig, nuint sigLen);
 
     static readonly VerifyFn? Fn = Load();
 
@@ -64,10 +64,13 @@ public static class LessNative
     public static bool SigLenOk(int n) => n >= SignatureMinBytes && n <= SignatureMaxBytes && (SignatureMaxBytes - n) % SignatureStepBytes == 0;
 
     /// <summary>The detached signature opens under <paramref name="pk"/> and yields exactly <paramref name="msg"/>.</summary>
-    public static bool Verify(byte[] pk, byte[] msg, byte[] sig)
+    public static bool Verify(byte[] pk, byte[] msg, byte[] sig) => VerifyWith(Fn, pk, msg, sig);
+
+    // the native wrapper accepts (msg == NULL, msg_len == 0), so an empty message is passed as is
+    internal static bool VerifyWith(VerifyFn? fn, byte[] pk, byte[] msg, byte[] sig)
     {
-        if (Fn == null || pk.Length != PublicKeyBytes || !SigLenOk(sig.Length)) return false;
-        try { return Fn(pk, (nuint)pk.Length, msg.Length == 0 ? new byte[1] : msg, (nuint)msg.Length, sig, (nuint)sig.Length) == 1; }
+        if (fn == null || pk.Length != PublicKeyBytes || !SigLenOk(sig.Length)) return false;
+        try { return fn(pk, (nuint)pk.Length, msg, (nuint)msg.Length, sig, (nuint)sig.Length) == 1; }
         catch { return false; }
     }
 }

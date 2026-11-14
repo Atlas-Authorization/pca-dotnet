@@ -10,33 +10,37 @@ namespace AtlasPca.Corpus.Tests;
 /// carried as JSON text so both sides parse identical lexemes (1e400, -0, lone surrogates).</summary>
 public class PredJsOracleTests
 {
-    static readonly Lazy<D> G = new(() =>
+    static readonly string GText = LoadText();
+    static D G => (D)Pca.ParseJson(GText)!;
+
+    static string LoadText()
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
         {
             var f = Path.Combine(d, "test-data", "k042-predjs.json");
             if (!File.Exists(f)) f = Path.Combine(d, "AtlasPca.Corpus.Tests", "test-data", "k042-predjs.json");
-            if (File.Exists(f)) return (D)Pca.ParseJson(File.ReadAllText(f))!;
+            if (File.Exists(f)) return File.ReadAllText(f);
         }
         throw new FileNotFoundException("test-data/k042-predjs.json");
-    });
+    }
 
-    static L Cases(string k) => (L)G.Value[k]!;
+    static L Cases(D g, string k) => (L)g[k]!;
     static Predicates.Tri Tri(string s) => s switch { "true" => Predicates.Tri.True, "false" => Predicates.Tri.False, _ => Predicates.Tri.Unknown };
-    static D? Ctx(string name) => Pca.ParseJson((string)((D)G.Value["ctx"]!)[name]!) as D;
+    static D? Ctx(D g, string name) => Pca.ParseJson((string)((D)g["ctx"]!)[name]!) as D;
     static bool B(object? o) => (bool)o!;
 
     [Fact]
     public void ConditionsMatchTheReference()
     {
+        var g = G;
         var bad = new List<string>(); int n = 0;
-        foreach (D c in Cases("tri"))
+        foreach (D c in Cases(g, "tri"))
         {
             var cond = Pca.ParseJson((string)c["cond"]!);
             var want = Tri((string)c["tri"]!);
-            var got = Predicates.EvaluateConditionTri(cond, Ctx((string)c["ctx"]!));
-            var gotB = Predicates.EvaluateCondition(cond, Ctx((string)c["ctx"]!));
+            var got = Predicates.EvaluateConditionTri(cond, Ctx(g, (string)c["ctx"]!));
+            var gotB = Predicates.EvaluateCondition(cond, Ctx(g, (string)c["ctx"]!));
             if (got != want || gotB != (want == Predicates.Tri.True)) bad.Add($"{c["name"]}: want {want} got {got}/{gotB}");
             n++;
         }
@@ -47,12 +51,13 @@ public class PredJsOracleTests
     [Fact]
     public void PredicatesMatchTheReference()
     {
+        var g = G;
         var bad = new List<string>();
-        foreach (D c in Cases("preds"))
+        foreach (D c in Cases(g, "preds"))
         {
             var preds = Pca.ParseJson((string)c["preds"]!);
             var want = B(c["allowed"]);
-            var got = Predicates.EvaluatePredicates(preds, Ctx((string)c["ctx"]!));
+            var got = Predicates.EvaluatePredicates(preds, Ctx(g, (string)c["ctx"]!));
             if (got != want) bad.Add($"{c["name"]}: allowed want {want} got {got}");
             var each = (L)c["each"]!;
             if (preds is L ps)
@@ -60,7 +65,7 @@ public class PredJsOracleTests
                 Assert.Equal(each.Count, ps.Count);
                 for (int i = 0; i < ps.Count; i++)
                 {
-                    var m = Predicates.PredicateMatches(ps[i], Ctx((string)c["ctx"]!));
+                    var m = Predicates.PredicateMatches(ps[i], Ctx(g, (string)c["ctx"]!));
                     if (m != B(each[i])) bad.Add($"{c["name"]}[{i}]: want {each[i]} got {m}");
                 }
             }
@@ -71,8 +76,9 @@ public class PredJsOracleTests
     [Fact]
     public void JsonEqualsIsTheLenientCanonicalTextEquality()
     {
+        var g = G;
         var bad = new List<string>();
-        foreach (D c in Cases("eq"))
+        foreach (D c in Cases(g, "eq"))
             if (IntentJs.JsonEquals(Pca.ParseJson((string)c["a"]!), Pca.ParseJson((string)c["b"]!)) != B(c["eq"])) bad.Add($"{c["a"]} == {c["b"]}: want {c["eq"]}");
         Assert.Empty(bad);
     }
@@ -83,8 +89,9 @@ public class PredJsOracleTests
     [Fact]
     public void NumbersMatchJavaScript()
     {
+        var g = G;
         var bad = new List<string>();
-        foreach (D c in Cases("nums"))
+        foreach (D c in Cases(g, "nums"))
         {
             string raw = (string)c["raw"]!, js = (string)c["js"]!;
             var n = new Num(raw);
@@ -123,13 +130,14 @@ public class PredJsOracleTests
     [Fact]
     public void Utf8LengthsAndSurrogates()
     {
-        foreach (D c in Cases("u8"))
+        var g = G;
+        foreach (D c in Cases(g, "u8"))
         {
             var s = (string)c["s"]!;
             Assert.Equal(((Num)c["n"]!).Raw, IntentJs.U8Len(s).ToString());
             Assert.Equal(B(c["lone"]), IntentJs.HasLoneSurrogate(s));
         }
-        foreach (D c in Cases("cmp"))
+        foreach (D c in Cases(g, "cmp"))
             Assert.Equal(int.Parse(((Num)c["sign"]!).Raw), Math.Sign(IntentJs.CompareUtf8((string)c["a"]!, (string)c["b"]!)));
     }
 
@@ -149,7 +157,7 @@ public class PredJsOracleTests
     [Fact]
     public void MemberClosureIsCappedLikeTheReference() => BigStack.Run(() =>
     {
-        var chain = (D)G.Value["chain"]!; var fan = (D)G.Value["fan"]!;
+        var g = G; var chain = (D)g["chain"]!; var fan = (D)g["fan"]!;
         var cc = ChainCtx(10005);
         foreach (var (k, v) in chain) Assert.Equal(Tri((string)v!), Predicates.EvaluateConditionTri(Mo(k), cc));
         var fc = FanCtx();

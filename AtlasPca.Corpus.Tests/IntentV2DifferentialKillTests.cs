@@ -15,7 +15,10 @@ public class IntentV2DifferentialKillTests
 {
     const string FailClosed = "(fail closed): ";
 
-    static readonly Lazy<L> Cases = new(() =>
+    // The corpus is split with System.Text.Json (BCL, no code under test) into the raw text of each case; a case is parsed with
+    // Pca.ParseJson per test, so a mutant in the parser can never poison a process-wide cache (1000+ theories: one parse of the
+    // whole file per test would be too slow).
+    static readonly Lazy<List<(string Name, string Raw)>> RawCases = new(() =>
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
@@ -25,21 +28,22 @@ public class IntentV2DifferentialKillTests
             if (!File.Exists(f)) continue;
             using var gz = new GZipStream(File.OpenRead(f), CompressionMode.Decompress);
             using var sr = new StreamReader(gz, new UTF8Encoding(false));
-            return (L)((D)Pca.ParseJson(sr.ReadToEnd())!)["cases"]!;
+            using var doc = System.Text.Json.JsonDocument.Parse(sr.ReadToEnd(), new System.Text.Json.JsonDocumentOptions { MaxDepth = 4096 });
+            return doc.RootElement.GetProperty("cases").EnumerateArray().Select(e => (Name: e.GetProperty("name").GetString()!, Raw: e.GetRawText())).ToList();
         }
         throw new FileNotFoundException("test-data/k042-intentv2-cases.json.gz");
     });
 
-    public static IEnumerable<object[]> Names() => Cases.Value.Select(c => new object[] { (string)((D)c!)["name"]! });
+    public static IEnumerable<object[]> Names() => RawCases.Value.Select(c => new object[] { c.Name });
 
     [Fact]
-    public void CorpusIsTheFullOracle() => Assert.True(Cases.Value.Count > 1000);
+    public void CorpusIsTheFullOracle() => Assert.True(RawCases.Value.Count > 1000);
 
     [Theory]
     [MemberData(nameof(Names))]
     public void CaseMatchesTheReference(string name)
     {
-        var cs = (D)Cases.Value.First(c => (string)((D)c!)["name"]! == name)!;
+        var cs = (D)Pca.ParseJson(RawCases.Value.First(c => c.Name == name).Raw)!;
         var p = (D)Pca.ParseJson((string)cs["p"]!)!;
         var grant = (D)Pca.ParseJson((string)cs["grant"]!)!;
         IntentV2Context? ctx = cs.ContainsKey("ctx") ? IntentV2Context.FromJsonText((string)cs["ctx"]!) : null;

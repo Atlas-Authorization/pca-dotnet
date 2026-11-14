@@ -17,8 +17,8 @@ public class PcaMiddlewareTests
 {
     const string ValidVector = "valid-raw-json-format-insensitive"; // allow=true, carries raw signed pcactn_json
 
-    static readonly Dictionary<string, object?> Doc =
-        (Dictionary<string, object?>)Pca.ParseJson(File.ReadAllText(FindVectors()))!;
+    static readonly string DocText = File.ReadAllText(FindVectors()); // raw text only; parsed per access (one parse per test)
+    static Dictionary<string, object?> Doc => (Dictionary<string, object?>)Pca.ParseJson(DocText)!;
 
     static string FindVectors()
     {
@@ -55,6 +55,7 @@ public class PcaMiddlewareTests
         System.Func<string, Task<Dictionary<string, object?>?>>? resolverOverride = null) => new()
         {
             Audience = audienceOverride ?? f.Aud,
+            SignatureOnly = true, InsecureSkipPlanRootCheck = true,
             Clock = () => f.Now,
             GrantResolver = resolverOverride
                 ?? (r => Task.FromResult<Dictionary<string, object?>?>(r == f.GrantRef ? f.Grant : null)),
@@ -130,8 +131,8 @@ public class PcaMiddlewareTests
         Assert.Null(ctx.Items["pca"]);
         var www = ctx.Response.Headers["WWW-Authenticate"].ToString();
         Assert.StartsWith("PCA realm=\"pca\"", www);
-        Assert.Contains("error=\"invalid_request\"", www);
-        Assert.Contains("\"error\":\"invalid_request\"", ReadBody(ctx));
+        Assert.Contains("error=\"missing_pcactn\"", www);
+        Assert.Contains("\"error\":\"missing_pcactn\"", ReadBody(ctx));
     }
 
     [Fact]
@@ -151,11 +152,11 @@ public class PcaMiddlewareTests
         Assert.False(nextRan);
         Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
         Assert.Null(ctx.Items["pca"]);
-        Assert.Contains("error=\"invalid_grant\"", ctx.Response.Headers["WWW-Authenticate"].ToString());
+        Assert.Contains("error=\"unknown_grant\"", ctx.Response.Headers["WWW-Authenticate"].ToString());
     }
 
     [Fact]
-    public async Task WrongAudience_Returns403()
+    public async Task WrongAudience_Returns401_AnAuthenticationFailure()
     {
         var f = LoadValid();
         bool nextRan = false;
@@ -168,10 +169,10 @@ public class PcaMiddlewareTests
         await mw.InvokeAsync(ctx);
 
         Assert.False(nextRan);
-        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
+        Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
         Assert.Null(ctx.Items["pca"]);
         var www = ctx.Response.Headers["WWW-Authenticate"].ToString();
-        Assert.Contains("error=\"access_denied\"", www);
+        Assert.Contains("error=\"invalid_pcactn\"", www);
         Assert.Contains("audience", ReadBody(ctx)); // the denying reason names the failed audience check
     }
 
@@ -304,8 +305,8 @@ public class PcaMiddlewareTests
         var ctx = NewContext();
         ctx.Request.Headers["PCA-Action"] = HeaderFor(f.Json);
         await mw.InvokeAsync(ctx);
-        Assert.Equal(StatusCodes.Status403Forbidden, ctx.Response.StatusCode);
-        Assert.Equal("PCA realm=\"pca\", error=\"access_denied\"", ctx.Response.Headers["WWW-Authenticate"].ToString());
+        Assert.Equal(StatusCodes.Status401Unauthorized, ctx.Response.StatusCode);
+        Assert.Equal("PCA realm=\"pca\", error=\"invalid_pcactn\", hint=\"send PCA-Action: <base64url PCActn> or JSON body {pcactn}\"", ctx.Response.Headers["WWW-Authenticate"].ToString());
         Assert.Contains("audience", ReadBody(ctx));
     }
 

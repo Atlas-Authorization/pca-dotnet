@@ -18,7 +18,10 @@ public class RegexDifferentialKillTests
 {
     const int Reachable = 100;
 
-    static readonly Lazy<D> Data = new(() =>
+    static readonly string DataText = LoadText();
+    static D Data => (D)Pca.ParseJson(DataText)!;
+
+    static string LoadText()
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
@@ -28,12 +31,12 @@ public class RegexDifferentialKillTests
             if (!File.Exists(f)) continue;
             using var gz = new GZipStream(File.OpenRead(f), CompressionMode.Decompress);
             using var sr = new StreamReader(gz, new UTF8Encoding(false));
-            return (D)Pca.ParseJson(sr.ReadToEnd())!;
+            return sr.ReadToEnd();
         }
         throw new FileNotFoundException("test-data/killRegex.json.gz");
-    });
+    }
 
-    static L Sec(string k) => (L)Data.Value[k]!;
+    static L Sec(string k) => (L)Data[k]!;
     static long N(object? o) => o is Num n ? long.Parse(n.Raw) : Convert.ToInt64(o);
     static bool? Want(long r) => r < 0 ? null : r == 1;
 

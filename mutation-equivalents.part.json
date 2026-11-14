@@ -1,0 +1,291 @@
+[
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Equality mutation: value >= v",
+  "line": "if (!_pins.TryGetValue(key, out var v) || value > v) _pins[key] = v = value;",
+  "occurrence": 1,
+  "lineno": 116,
+  "reason": "The two forms differ only for value == v with the key present. The mutant then stores `_pins[key] = v = value`, which writes the value already stored back to the same key, and returns v; the original skips the write and returns the same v. For value > v and value < v both forms agree, and for an absent key the first operand decides."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "static string BudgetText(TrustBudget b) => string.Join(\"|\", new[] { b.B, b.Tau, b.AsOf ?? double.NaN }.Select(x => x.ToString(\"R\", CultureInfo.InvariantCulture)));",
+  "occurrence": 1,
+  "lineno": 200,
+  "reason": "The surviving literal is the \"R\" numeric format of x.ToString(\"R\", CultureInfo.InvariantCulture). On net8 the default double format (the empty format string) is the shortest round-trippable string, which is exactly what \"R\" prints, for every double including NaN, so the stored text is identical. The \"|\" separator literal on the same line is decided by the exact \"0.5|1|100\" assertions on the stored text."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "catch (Exception) { bc = null; }",
+  "occurrence": 1,
+  "lineno": 1380,
+  "reason": "bc is declared `BeaconPresented? bc = null;` just above the try and its only assignment is `bc = input.Beacon(grantRef, p)` inside the try. When Beacon throws, that assignment never completes, so bc is still null on the catch path and the removed `bc = null` is a no-op. The late failure of a store write is not on this path (Beacon is a callback, not a store)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Conditional (true) mutation: (true?IntentJs.Get(env, \"agent_binding\") :null)",
+  "line": "if (RequiresAttestation(env != null ? IntentJs.Get(env, \"agent_binding\") : null))",
+  "occurrence": 1,
+  "lineno": 1530,
+  "reason": "IntentJs.Get(o, k) is `o is Dictionary<string, object?> d && d.TryGetValue(k, out var v) ? v : null`, which is null for a null o. With env == null the mutant passes Get(null, \"agent_binding\") == null, exactly what the original passes; with env != null both take the same branch."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Conditional (true) mutation: (true?chain :null)",
+  "line": "k1res = CaveatLang.EvaluateK1(grant, chain.Count > 0 ? chain : null, k1in.WithActionDigest(CaveatLang.DischargeActionDigest(p)), new K1Context(now, inner));",
+  "occurrence": 1,
+  "lineno": 1570,
+  "reason": "Every use of the chain argument inside CaveatLang.EvaluateK1 (BoundCaveats, VerifyNarrow, the hops list) goes through HopsOf(grant, chain) = `chain is JL { Count: > 0 } c ? c : new JL { grant }`, so an empty list and null both yield the one-element list { grant }; EvaluateK1 reads chain nowhere else. For a non-empty chain the condition is true in the original and the mutant alike."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Equality mutation: chain.Count >= 0",
+  "line": "k1res = CaveatLang.EvaluateK1(grant, chain.Count > 0 ? chain : null, k1in.WithActionDigest(CaveatLang.DischargeActionDigest(p)), new K1Context(now, inner));",
+  "occurrence": 1,
+  "lineno": 1570,
+  "reason": "chain.Count >= 0 is true for every list, so the mutant always passes `chain`. Every use of the chain argument inside CaveatLang.EvaluateK1 (BoundCaveats, VerifyNarrow, the hops list) goes through HopsOf(grant, chain) = `chain is JL { Count: > 0 } c ? c : new JL { grant }`, so an empty list and null both yield the one-element list { grant }; EvaluateK1 reads chain nowhere else. For a non-empty chain the condition is true in the original and the mutant alike."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Conditional (true) mutation: (true?chain :null)",
+  "line": "var unconfigured = CaveatLang.EvaluateK1(grant, chain.Count > 0 ? chain : null, null, new K1Context(now, inner));",
+  "occurrence": 1,
+  "lineno": 1580,
+  "reason": "Every use of the chain argument inside CaveatLang.EvaluateK1 (BoundCaveats, VerifyNarrow, the hops list) goes through HopsOf(grant, chain) = `chain is JL { Count: > 0 } c ? c : new JL { grant }`, so an empty list and null both yield the one-element list { grant }; EvaluateK1 reads chain nowhere else. For a non-empty chain the condition is true in the original and the mutant alike."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Equality mutation: chain.Count >= 0",
+  "line": "var unconfigured = CaveatLang.EvaluateK1(grant, chain.Count > 0 ? chain : null, null, new K1Context(now, inner));",
+  "occurrence": 1,
+  "lineno": 1580,
+  "reason": "chain.Count >= 0 is true for every list, so the mutant always passes `chain`. Every use of the chain argument inside CaveatLang.EvaluateK1 (BoundCaveats, VerifyNarrow, the hops list) goes through HopsOf(grant, chain) = `chain is JL { Count: > 0 } c ? c : new JL { grant }`, so an empty list and null both yield the one-element list { grant }; EvaluateK1 reads chain nowhere else. For a non-empty chain the condition is true in the original and the mutant alike."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Conditional (false) mutation: (false?\"NaN\" :double.IsPositiveInfinity(hv) ? \"Infinity\" : double.IsNegativeInfinity(hv) ? \"-Infinity\" : JsCanon.NumberString(hv))",
+  "line": "Fail(\"threshold\", $\"threshold hook enforced t={(hookT is double hv ? (double.IsNaN(hv) ? \"NaN\" : double.IsPositiveInfinity(hv) ? \"Infinity\" : double.IsNegativeInfinity(hv) ? \"-Infinity\" : JsCanon.NumberString(hv)) : \"unreported\")} but the server requires t={tReq} (below the server-derived threshold; derive t from server-held data)\");",
+  "occurrence": 1,
+  "lineno": 1650,
+  "reason": "For hv = NaN the mutant skips the NaN arm: IsPositiveInfinity(NaN) and IsNegativeInfinity(NaN) are false, so it prints JsCanon.NumberString(NaN). That function (Ext/JsCanon.cs) formats Math.Abs(NaN).ToString(InvariantCulture) = \"NaN\" through the digits branch (k = n = 3 gives the digits unchanged), so the text is \"NaN\" as in the original. For every other hv the NaN condition is false in both forms."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Conditional (false) mutation: (false?\"-Infinity\" :JsCanon.NumberString(hv))",
+  "line": "Fail(\"threshold\", $\"threshold hook enforced t={(hookT is double hv ? (double.IsNaN(hv) ? \"NaN\" : double.IsPositiveInfinity(hv) ? \"Infinity\" : double.IsNegativeInfinity(hv) ? \"-Infinity\" : JsCanon.NumberString(hv)) : \"unreported\")} but the server requires t={tReq} (below the server-derived threshold; derive t from server-held data)\");",
+  "occurrence": 1,
+  "lineno": 1650,
+  "reason": "For hv = -Infinity the mutant prints JsCanon.NumberString(-Infinity): neg is true, Math.Abs(-Infinity).ToString(InvariantCulture) = \"Infinity\" goes through the digits branch unchanged (k = n = 8), and the result is \"-\" + \"Infinity\" = \"-Infinity\", the original text. For every other hv the -Infinity condition is false in both forms."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Equality mutation: chain.Count >= 0",
+  "line": "if (input.StateStore is ILastStore lastStore && chain.Count > 0 && IntentJs.Get(chain[^1], \"holder\") is string rh && IntentJs.Get(grant, \"id\") is string rg",
+  "occurrence": 1,
+  "lineno": 1689,
+  "reason": "The two forms differ only for an empty chain. The operands before chain.Count are a pure type test and a local, so nothing is done before the mutant evaluates `chain[^1]`, which throws ArgumentOutOfRangeException inside the try whose `catch (Exception) { /* the claim below decides */ }` swallows it. replayRefused stays false and no check is written, exactly what the original does when the condition is false."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "try { renderDigest = input.EscalationRender?.Invoke(p); } catch (Exception) { renderDigest = null; }",
+  "occurrence": 1,
+  "lineno": 1777,
+  "reason": "renderDigest is declared `string? renderDigest = null;` on the line above and its only assignment inside the try is the Invoke result, which never completes when Invoke throws, so it is already null on the catch path and the removed `renderDigest = null` is a no-op."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Logical mutation: n != \"operation\" || n != \"plan_state\"",
+  "line": "foreach (var n in order.Where(n => n == \"operation\").Concat(order.Where(n => n == \"plan_state\")).Concat(order.Where(n => n != \"operation\" && n != \"plan_state\")))",
+  "occurrence": 1,
+  "lineno": 2058,
+  "reason": "The mutant's third sequence is every name in order (n != \"operation\" || n != \"plan_state\" is true for every n), so operation and plan_state come up a second time after the first two sequences have already listed them. The loop returns at the first name whose check is \"fail\" and that has a reason starting with the name; checks, order and reasons are not changed inside the loop, so a name that did not return on its first visit cannot return on the repeat. The fall-through return is reached in both forms with the same value."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "foreach (var n in order.Where(n => n == \"operation\").Concat(order.Where(n => n == \"plan_state\")).Concat(order.Where(n => n != \"operation\" && n != \"plan_state\")))",
+  "occurrence": 1,
+  "lineno": 2058,
+  "reason": "The two surviving mutants are the two `!=` operands of the third sequence (`n != \"\"` for \"operation\" or \"plan_state\"): it makes that sequence include operation / plan_state again after the first two sequences listed them, and a name that did not return on its first visit cannot return on the repeat because checks, order and reasons do not change inside the loop. The `== \"operation\"` and `== \"plan_state\"` operands, which set the priority, are decided by the ordering assertions.",
+  "multiplicity": 2
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "Logical mutation: b is null && op is null",
+  "line": "if (b is null || op is null) return false;",
+  "occurrence": 1,
+  "lineno": 2117,
+  "reason": "With `&&` the early return happens only when both are null; if exactly one is null the next line dereferences it (`b.Verb` on a null record, or `op.Value` on a null Nullable, which throws InvalidOperationException) inside the try whose `catch (Exception) { return false; }` returns false. Every input gives false in both forms."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Contracts.cs",
+  "mutant": "Arithmetic mutation: MaxClauses - 1",
+  "line": "if (depth > MaxClauseDepth + 1) return MaxClauses + 1;",
+  "occurrence": 1,
+  "lineno": 75,
+  "reason": "Count reaches depth 18 only through 17 enclosing \"and\" clauses, each of which has already done n++ (and adds the returned value to its n). The total is therefore at least 17 + (MaxClauses - 1) = 272 with the mutant (274 originally), and Validate tests `Count(cls) > MaxClauses` (256): true in both forms for every input that reaches the depth cut."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Contracts.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "catch (Exception) { t = new(false, \"clause evaluation error (fail closed)\", new() { new InvariantEval((string)((JD)cl!)[\"id\"]!, \"clause\", \"violated\", \"clause evaluation error (fail closed)\") }, new(), new()); }",
+  "occurrence": 1,
+  "lineno": 248,
+  "reason": "The surviving literal is the Transition.Reason (second constructor argument): the only reads of t after the catch are `t.Rows` (line `ev.AddRange(t.Rows)`), so Ok and Reason are never observed. The two literals that are observed, the row kind \"clause\", the result \"violated\" and the row reason, are asserted in ContractsKillTests2 (rows and reasons \"n1: clause evaluation error (fail closed)\")."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Prohibitions.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "if (ValidateWhen(w, \"when\") != null) return true;",
+  "occurrence": 1,
+  "lineno": 86,
+  "reason": "The label only prefixes the messages ValidateWhen returns ($\"{label}: not an object\" and the like); every branch that returns a message returns a non-null string whatever the label, and the caller compares the result with null only. The empty label gives the same null-ness for every input."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Prohibitions.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "try { return ValidateWhen(w, \"when\") == null && Predicates.PredicateMatches(w, ctx); }",
+  "occurrence": 1,
+  "lineno": 106,
+  "reason": "The label only prefixes the messages ValidateWhen returns ($\"{label}: not an object\" and the like); every branch that returns a message returns a non-null string whatever the label, and the caller compares the result with null only. The empty label gives the same null-ness for every input."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafetyEvidence.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "var wantConst = has(\"constitution\") ? ex[\"constitution\"] is JD cd ? ConstitutionId(cd) : throw new InvalidOperationException(\"constitution is not an object\") : ex[\"constitutionId\"] as string;",
+  "occurrence": 1,
+  "lineno": 150,
+  "reason": "The surviving literal is the message of `throw new InvalidOperationException(\"constitution is not an object\")`. The exception is caught by VerifySigned's own `catch (Exception) { return No(\"verification error (fail closed)\"); }`, which returns a fixed text and never reads the message."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafetyEvidence.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "var badRows = rows.Where(r => !Equals(Get(r, \"result\"), \"pass\")).Select(r => Get(r, \"id\")).ToList();",
+  "occurrence": 1,
+  "lineno": 165,
+  "reason": "The surviving literal is the \"id\" of `.Select(r => Get(r, \"id\"))`: badRows is only read through badRows.Count, never through its elements, and Get is total (null for a non-object or missing member). The \"result\" and \"pass\" literals of the Where are decided by the passing evidence in ProhibitionsDirectKillTests."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafetyEvidence.cs",
+  "mutant": "Null coalescing mutation (remove left): \"evidence does not reproduce\"",
+  "line": "if (!full.Ok && claimedOk) return No(full.Reason ?? \"evidence does not reproduce\");",
+  "occurrence": 1,
+  "lineno": 172,
+  "reason": "In this branch the evidence version, constitution, action digest and state digest have all matched, so Verify can only fail through `HashCanonical(fresh) != HashCanonical(ev)`, giving \"evidence does not reproduce\"; \"prohibition violated\" needs the two hashes to be equal, which includes the \"ok\" member, so it contradicts claimedOk == true; Verify's own catch cannot fire because the same HashCanonical(ev) already ran for the binding id. full.Reason is therefore always \"evidence does not reproduce\" here."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafetyEvidence.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "if (!full.Ok && claimedOk) return No(full.Reason ?? \"evidence does not reproduce\");",
+  "occurrence": 1,
+  "lineno": 172,
+  "reason": "The literal is the right operand of `full.Reason ?? ...`; Verify returns a non-null Reason on every path with Ok == false (every `return (false, \"...\")` and its catch), so the right operand is never evaluated."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformanceKv.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "string? seen = \"x\";",
+  "occurrence": 1,
+  "lineno": 104,
+  "reason": "`seen` is only compared with null (`if (seen != null)`). \"x\" and \"\" are both non-null, so a store that never runs the function (leaving the initial value) and one that does (setting it to prev) give the same answer for either initial value."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformanceKv.cs",
+  "mutant": "String mutation: \"\"",
+  "line": "try { kv.Update(key, _ => throw new InvalidOperationException(\"boom\")); return \"a throwing function was swallowed\"; }",
+  "occurrence": 1,
+  "lineno": 122,
+  "reason": "The message of the exception the test function throws is never read: the catch is `catch (InvalidOperationException) { /* expected */ }` and only the type is matched."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Facade.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "if (!double.IsFinite(amount)) throw new ArgumentException($\"parseLimit: bad amount in '{s}'\");",
+  "occurrence": 1,
+  "lineno": 147,
+  "reason": "Unreachable for every input. The line runs only after the input passed the length cap (at most 64 UTF-16 code units, checked on the untrimmed string) and matched the limit grammar, so group 2 is at most 64 ASCII digits with at most one '.'. double.Parse of such a string is below 1e64, far under double.MaxValue (about 1.8e308), so the amount is always finite and the throw never runs; removing it changes no outcome. Kept as a defence in depth matching the reference facade.ts parseLimit (`!Number.isFinite(amount) || amount < 0`)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Facade.cs",
+  "mutant": "String mutation: $\"\"",
+  "line": "if (!double.IsFinite(amount)) throw new ArgumentException($\"parseLimit: bad amount in '{s}'\");",
+  "occurrence": 1,
+  "lineno": 147,
+  "reason": "The message of a throw that never runs: for every input the amount is finite (at most 64 ASCII digits and one '.', so below 1e64; see the statement-removal entry of this line), so the interpolated message is never built or read."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Facade.cs",
+  "mutant": "Equality mutation: Severity(s.Reversibility) >= Severity(strictest)",
+  "line": "foreach (var s in actions) if (Severity(s.Reversibility) > Severity(strictest)) strictest = s.Reversibility;",
+  "occurrence": 1,
+  "lineno": 205,
+  "reason": "Equivalent for every input. strictest starts as \"reversible\" (index 0) and is only ever assigned an s.Reversibility whose index is >= its own, so it is always one of the three known classes and Severity(strictest) >= 0. The forms differ only when Severity(s.Reversibility) == Severity(strictest) >= 0; Array.IndexOf over three distinct strings returns the same non-negative index only for the same string, so the mutant then assigns strictest the string it already holds. An unknown class has index -1 and is never assigned by either form."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Facade.cs",
+  "mutant": "Linq method mutation (Count() to Sum()): periods.Sum",
+  "line": "if (periods.Count > 0) caveats.Add(new JD { [\"type\"] = \"expires\", [\"at\"] = now + periods.Min() });",
+  "occurrence": 1,
+  "lineno": 209,
+  "reason": "Equivalent for every input. Every element of periods is a PeriodMs from ParseLimit, i.e. a value of the period table: between 1000 and 2_592_000_000, all positive. So the sum is > 0 exactly when the list is non-empty. The checked long sum cannot overflow: a List holds fewer than 2^31 elements, and 2^31 * 2_592_000_000 is about 5.6e18, below long.MaxValue (about 9.2e18)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Facade.cs",
+  "mutant": "Equality mutation: RiskOf().Kappa >= 0",
+  "line": "if (double.IsFinite(amt) && RiskOf().Kappa > 0) return Clamp(amt / RiskOf().Kappa);",
+  "occurrence": 1,
+  "lineno": 384,
+  "reason": "Equivalent for every input. RiskOf() is Risk.PolicyOf(Policy.RiskPolicy)!, which returns null unless Pca.ValidateRiskPolicy accepts the policy, and that rejects any kappa <= 0 ('risk_policy.kappa must be > 0'). So when RiskOf() is non-null its Kappa is > 0 and both `> 0` and `>= 0` are true; when it is null both forms throw the same NullReferenceException reading .Kappa before any comparison. When the amount is not finite the left operand decides both forms."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Facade.cs",
+  "mutant": "Conditional (false) mutation: (false?null :Issue.NormJ(prms))",
+  "line": "var p = prms == null ? null : Issue.NormJ(prms);",
+  "occurrence": 1,
+  "lineno": 417,
+  "reason": "Equivalent for every input. The forms differ only for prms == null, where the mutant calls Issue.NormJ(null) = (JD)Pca.ParseStrict(Pca.Canonicalize(null)): Canonicalize(null) is \"null\" and ParseStrict(\"null\") is null, so p is null exactly as in the original branch, with no exception and no other effect."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SignersMore.cs",
+  "mutant": "String mutation: \"Stryker was here!\"",
+  "line": "probe[\"sig\"] = \"\";",
+  "occurrence": 1,
+  "lineno": 240,
+  "reason": "probe exists only for IntentSession.RootShapeError(probe), which reads sig once, as `IntentJs.Get(s, \"sig\") is not string` (\"sig must be a string\"); \"\" and \"Stryker was here!\" are both strings, so that check passes for both. The only other use of the root's members there is IntentJs.CanonBytes(RootBody(s)), and RootBody leaves sig out. So RootShapeError returns the same value for every body and signer, the same throw (or none) follows, and the artifact itself is signed from base_, which never holds sig."
+ }
+]

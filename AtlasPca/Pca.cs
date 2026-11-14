@@ -35,7 +35,7 @@ public static class Pq
     public readonly record struct Suite(int SigBytes, bool NeedsPqPk, bool NeedsPqSig, Prim Pq = Prim.None, bool Nested = false);
 
     /// <summary>The closed TS suite registry (SIG_SUITES in pq.ts), in registry order.</summary>
-    public static readonly IReadOnlyList<string> RegisteredSuites = new[]
+    public static IReadOnlyList<string> RegisteredSuites => new[]
     {
         "ed25519", "ml-dsa-65", "hybrid-ed25519-ml-dsa-65", "hybrid-nested-ed25519-ml-dsa-65", "slh-dsa-sha2-128f",
         "hybrid-ed25519-slh-dsa-sha2-128f", "ml-dsa-87", "hybrid-ed25519-ml-dsa-87", "slh-dsa-sha2-256s",
@@ -59,7 +59,12 @@ public static class Pq
 
     /// <summary>The suites this verifier implements in this runtime (a subset of <see cref="RegisteredSuites"/>; the LESS suites
     /// only when <see cref="LessNative.Available"/>).</summary>
-    public static readonly Dictionary<string, Suite> Suites = BuildSuites();
+    // per access: a type initializer run while a mutant is active would keep that mutant's result for every later mutant in the same test host
+    public static Dictionary<string, Suite> Suites { get { var s = BuildSuites(); SuitesHook?.Invoke(s); return s; } }
+
+    static readonly AsyncLocal<Action<Dictionary<string, Suite>>?> SuitesHookSlot = new();
+    /// <summary>Test seam: may add a suite to the freshly built registry (the LESS suites exist only when the native library loads).</summary>
+    internal static Action<Dictionary<string, Suite>>? SuitesHook { get => SuitesHookSlot.Value; set => SuitesHookSlot.Value = value; }
 
     static Dictionary<string, Suite> BuildSuites()
     {
@@ -136,10 +141,13 @@ public sealed record Num(string Raw);
 /// <param name="Require">Require every PCActn to carry a bound <c>intent</c>.</param>
 /// <param name="MinFidelityPpm">Deny when the claimed <c>fidelity_ppm</c> is below this (null = unset).</param>
 /// <param name="MaxResidualRiskPpm">Deny when the claimed <c>residual_risk_ppm</c> is above this (null = unset).</param>
-public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm = null, double? MaxResidualRiskPpm = null)
+/// <param name="ApprovedGoal">Goal binding v3: the root grant must open to exactly this approved goal and compiled policy (a v1 / v2 grant does not). Setting it activates the policy.</param>
+/// <param name="ApprovedGoalMisconfigured">An <c>approved_goal</c> that was configured but is not the closed object <c>{goal_digest, policy_digest}</c> of strings (<see cref="FromJson"/> sets it); the policy is active and the check fails closed.</param>
+public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm = null, double? MaxResidualRiskPpm = null,
+    ApprovedGoalRef? ApprovedGoal = null, bool ApprovedGoalMisconfigured = false)
 {
     /// <summary>True iff the policy is active (the intent check runs even for a PCActn without the field).</summary>
-    public bool IsActive => Require || MinFidelityPpm != null || MaxResidualRiskPpm != null;
+    public bool IsActive => Require || MinFidelityPpm != null || MaxResidualRiskPpm != null || ApprovedGoal != null || ApprovedGoalMisconfigured;
 
     /// <summary>From a parsed JSON object <c>{require?, min_fidelity_ppm?, max_residual_risk_ppm?}</c>
     /// (<see cref="Pca.ParseJson"/> tree or plain values). A non-object is null (no policy). A present threshold that
@@ -147,8 +155,17 @@ public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm =
     public static IntentPolicy? FromJson(object? o)
     {
         if (o is not Dictionary<string, object?> m) return null;
+        ApprovedGoalRef? ag = null;
+        bool bad = false;
+        if (m.TryGetValue("approved_goal", out var a))
+        {
+            // closed object: exactly goal_digest and policy_digest, both strings; anything else is a misconfiguration (fail closed)
+            if (a is Dictionary<string, object?> am && am.Count == 2 && am.GetValueOrDefault("goal_digest") is string gd && am.GetValueOrDefault("policy_digest") is string pd)
+                ag = new ApprovedGoalRef(gd, pd);
+            else bad = true;
+        }
         return new IntentPolicy(m.TryGetValue("require", out var r) && r is true,
-            Threshold(m, "min_fidelity_ppm"), Threshold(m, "max_residual_risk_ppm"));
+            Threshold(m, "min_fidelity_ppm"), Threshold(m, "max_residual_risk_ppm"), ag, bad);
     }
 
     /// <summary>From raw JSON text (a policy configuration file, or a conformance vector's <c>intent_policy_json</c>),
@@ -171,12 +188,38 @@ public sealed record IntentPolicy(bool Require = false, double? MinFidelityPpm =
     }
 }
 
+/// <summary>The digests a goal binding v3 commitment opens to: canonical base64url (32 bytes) of the signed goal and of the policy compiled from it.</summary>
+public sealed record ApprovedGoalRef(string GoalDigest, string PolicyDigest)
+{
+    /// <summary>Both digests are canonical base64url of exactly 32 bytes.</summary>
+    public bool IsValid => Pca.B64uDecode(GoalDigest, 32) != null && Pca.B64uDecode(PolicyDigest, 32) != null;
+}
+
+/// <summary>The core <c>plan_root_authorized</c> option (the reference's <c>authorizedPlanRoots</c> / <c>insecureSkipPlanRootCheck</c>). A GIVEN root list (even empty) is
+/// enforced: the check passes iff the PCActn's <c>plan.root</c> is listed. Without a list the check FAILS unless <see cref="InsecureSkip"/> is set, which reports it
+/// as not enforced (the list wins over the skip flag). A verifier that decides the plan itself (<see cref="Pca.Authorize"/>) passes <see cref="Skip"/>.</summary>
+public sealed record PlanRootPolicy(IReadOnlyList<string>? AuthorizedRoots = null, bool InsecureSkip = false)
+{
+    /// <summary>The explicit, loudly named opt-out: the check is reported as not enforced and never denies.</summary>
+    public static PlanRootPolicy Skip => new(null, true);
+}
+
 public sealed class Verdict
 {
     public bool Allow;
-    /// <summary>All eight checks (plus <c>intent</c> after <c>counter</c> when evaluated, then the Intent Layer v2 checks when reported), or only { wire:false } when the wire form is rejected (terminal).</summary>
+    /// <summary>Status of the core <c>plan_root_authorized</c> check: <c>pass</c>, <c>not-enforced</c> (the explicit opt-out), or <c>fail</c> (then
+    /// <c>Checks["plan_root_authorized"]</c> is false too; the key is absent from <see cref="Checks"/> otherwise, so the nine-check verdict of the shared vectors is unchanged).</summary>
+    public string PlanRootAuthorized = "";
+    /// <summary>All eight checks (plus <c>intent</c> after <c>counter_format</c> when evaluated, then the Intent Layer v2 checks when reported), or only { wire:false } when the wire form is rejected (terminal).</summary>
     public Dictionary<string, bool> Checks = new();
     public string Reason = "";
+    /// <summary>Every reason in order: the first failure (<see cref="Reason"/>), then one for EACH further failing intent-v2 check (the
+    /// escalate-class ones). <see cref="PcaDecision.DecisionOf(object?)"/> reads the whole list, so a multi-check escalation stays an
+    /// escalation. Empty when allowed, and on a wire failure (<see cref="Reason"/> only).</summary>
+    public List<string> Reasons = new();
+    /// <summary>Rule 21's compatibility mode is in effect (<c>model_polarity</c> "legacy" and a grant reads a model-derived path in where).
+    /// Authorize reports it as <see cref="AuthorizeResult.Degraded"/>["tighten"].</summary>
+    public bool LegacyModelPolarity;
 }
 
 public sealed class StrictJsonException : Exception
@@ -186,13 +229,16 @@ public sealed class StrictJsonException : Exception
 
 public static partial class Pca
 {
-    const string SigDomain = "atlas-pca/actn/v2\0";
-    const string CapDomain = "atlas-pca/cap/v1\0";
+    /// <summary>The maturity tier of this SDK (also the <c>maturity</c> assembly metadata and the <c>Maturity</c> MSBuild property).</summary>
+    public const string Maturity = "stable";
+
+    internal const string SigDomain = "atlas-pca/actn/v2\0";
+    internal const string CapDomain = "atlas-pca/cap/v1\0";
     // v2.1 agent-leaf threshold-share binding (README sections 9 + "v2.1 AGENT-LEAF BINDING").
     const string ShareDomainPrefix = "atlas-pca/share/";
     const string SignersetDomain = "atlas-pca/signerset/v1\0";
     const string ShareSuiteTag = "\0atlas-pca/share-suite/v1\0";
-    const string DefaultRev = "reversible";
+    internal const string DefaultRev = "reversible";
     public const int MaxJsonDepth = 32;
     public const int MaxJsonChars = 1 << 20; // UTF-8 bytes;
     public const int MaxDecimalDigits = 15;
@@ -554,9 +600,9 @@ public static partial class Pca
     }
 
     // ================= hashing / base64url =================
-    static byte[] Sha(byte[] b) => SHA256.HashData(b);
-    static byte[] Canon(object? v) => Encoding.UTF8.GetBytes(Canonicalize(v));
-    static byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
+    internal static byte[] Sha(byte[] b) => SHA256.HashData(b);
+    internal static byte[] Canon(object? v) => Encoding.UTF8.GetBytes(Canonicalize(v));
+    internal static byte[] Cat(params byte[][] parts) => parts.SelectMany(p => p).ToArray();
 
     public static string B64u(byte[] b) => Convert.ToBase64String(b).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 
@@ -584,12 +630,12 @@ public static partial class Pca
     public static string HashCanonical(object? v) => B64u(Sha(Canon(v)));
 
     // ================= Merkle =================
-    static byte[] LeafHash(object? leaf) => Sha(Cat(new byte[] { 0x00 }, Canon(leaf)));
-    static byte[] NodeHash(byte[] l, byte[] r) => Sha(Cat(new byte[] { 0x01 }, l, r));
+    internal static byte[] LeafHash(object? leaf) => Sha(Cat(new byte[] { 0x00 }, Canon(leaf)));
+    internal static byte[] NodeHash(byte[] l, byte[] r) => Sha(Cat(new byte[] { 0x01 }, l, r));
 
-    static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }
+    internal static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }
 
-    static byte[] Build(List<byte[]> hs)
+    internal static byte[] Build(List<byte[]> hs)
     {
         if (hs.Count == 1) return hs[0];
         int k = (int)Split(hs.Count);
@@ -643,10 +689,10 @@ public static partial class Pca
 
     public static string ParamsDigest(object? p) => HashCanonical(p ?? new Dictionary<string, object?>());
 
-    static string ConditionsDigest(object? pre, object? post) =>
+    internal static string ConditionsDigest(object? pre, object? post) =>
         HashCanonical(new Dictionary<string, object?> { ["pre"] = pre, ["post"] = post });
 
-    static Dictionary<string, object?>? PlanLeaf(object? nodeId, Dictionary<string, object?>? action, string cond)
+    internal static Dictionary<string, object?>? PlanLeaf(object? nodeId, Dictionary<string, object?>? action, string cond)
     {
         if (nodeId == null) return null;
         var pd = Get(action, "params_digest") ?? ParamsDigest(null);
@@ -659,62 +705,15 @@ public static partial class Pca
     }
 
     // ================= strict Ed25519 (RFC 8032) =================
-    static readonly BigInteger P = BigInteger.Pow(2, 255) - 19;
-    static readonly BigInteger L = BigInteger.Pow(2, 252) + BigInteger.Parse("27742317777372353535851937790883648493", CultureInfo.InvariantCulture);
-    static readonly BigInteger D = Mod(-121665 * BigInteger.ModPow(121666, P - 2, P));
-    static readonly BigInteger SqrtM1 = BigInteger.ModPow(2, (P - 1) / 4, P);
-    static BigInteger Mod(BigInteger a) { var r = a % P; return r < 0 ? r + P : r; }
+    static BigInteger L => BigInteger.Parse("7237005577332262213973186563042994240857116359379907606001950938285454250989", CultureInfo.InvariantCulture); // 2^252 + 27742317777372353535851937790883648493
 
-    // extended coordinates (X,Y,Z,T)
-    readonly record struct Pt(BigInteger X, BigInteger Y, BigInteger Z, BigInteger T);
-    static readonly Pt Identity = new(0, 1, 1, 0);
+    /// <summary>True iff the encoding is a canonical point of exactly prime order (not identity, no torsion): BouncyCastle's
+    /// full public-key validation (canonical y, on the curve, x = 0 never signed, not one of the 8 small-order points, [L]P = O).
+    /// It replaced a System.Numerics BigInteger ladder that was ~3 ms a call (two per signature).</summary>
+    internal static bool IsPrimeOrderPoint(byte[] enc) =>
+        enc.Length == 32 && Org.BouncyCastle.Math.EC.Rfc8032.Ed25519.ValidatePublicKeyFull(enc, 0);
 
-    static Pt Add(Pt a, Pt b)
-    {
-        var A = Mod((a.Y - a.X) * (b.Y - b.X));
-        var B = Mod((a.Y + a.X) * (b.Y + b.X));
-        var C = Mod(2 * D * a.T * b.T);
-        var Dd = Mod(2 * a.Z * b.Z);
-        var E = Mod(B - A); var F = Mod(Dd - C); var G = Mod(Dd + C); var H = Mod(B + A);
-        return new Pt(Mod(E * F), Mod(G * H), Mod(F * G), Mod(E * H));
-    }
-
-    static bool IsIdentity(Pt p) => Mod(p.X) == 0 && Mod(p.Y - p.Z) == 0;
-
-    static Pt MulL(Pt p)
-    {
-        var r = Identity; var q = p; var k = L;
-        while (k > 0) { if (!k.IsEven) r = Add(r, q); q = Add(q, q); k >>= 1; }
-        return r;
-    }
-
-    static Pt? Decode(byte[] b)
-    {
-        int sign = b[31] >> 7;
-        var yb = (byte[])b.Clone(); yb[31] &= 0x7f;
-        var y = new BigInteger(yb, isUnsigned: true, isBigEndian: false);
-        if (y >= P) return null; // non-canonical y
-        var y2 = Mod(y * y);
-        var u = Mod(y2 - 1); var v = Mod(D * y2 + 1);
-        var x2 = Mod(u * BigInteger.ModPow(v, P - 2, P));
-        var x = BigInteger.ModPow(x2, (P + 3) / 8, P);
-        if (Mod(x * x) != x2) x = Mod(x * SqrtM1);
-        if (Mod(x * x) != x2) return null; // not on the curve
-        if (x == 0 && sign == 1) return null;
-        if ((int)(x & 1) != sign) x = Mod(-x);
-        return new Pt(x, y, 1, Mod(x * y));
-    }
-
-    /// <summary>True iff the encoding is a canonical point of exactly prime order (not identity, no torsion).</summary>
-    static bool IsPrimeOrderPoint(byte[] enc)
-    {
-        var p = Decode(enc);
-        if (p == null) return false;
-        if (IsIdentity(p.Value)) return false;
-        return IsIdentity(MulL(p.Value));
-    }
-
-    static bool VerifyEd25519Strict(byte[] pk, byte[] msg, byte[] sig)
+    internal static bool VerifyEd25519Strict(byte[] pk, byte[] msg, byte[] sig)
     {
         if (pk.Length != 32 || sig.Length != 64) return false;
         var s = new BigInteger(sig.AsSpan(32), isUnsigned: true, isBigEndian: false);
@@ -811,7 +810,7 @@ public static partial class Pca
         catch (DecoderFallbackException) { return null; }
     }
 
-    static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+    static UTF8Encoding StrictUtf8 => new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
 
     /// <summary>Canonical base64url whose decoded length is a signature length of <paramref name="prim"/>.</summary>
     static bool PqSigOk(Pq.Prim prim, object? v) => B64uDecode(v) is { } b && Pq.SigLenOk(prim, b.Length);
@@ -834,7 +833,7 @@ public static partial class Pca
     /// <c>resolvePqVerifyKey</c> in packages/pca/src/pq.ts) and <see cref="CallerVouched"/>. The low-level suite verify
     /// (<see cref="VerifySuite"/>) accepts ONLY this type, so PQ verification cannot be reached with a <c>pq_pk</c>
     /// read straight off the artifact being verified.</summary>
-    sealed class PinnedPq
+    internal sealed class PinnedPq
     {
         public string Key { get; }
         PinnedPq(string key) { Key = key; }
@@ -874,7 +873,7 @@ public static partial class Pca
         if (suite.Nested)
         {
             var edSig = B64uDecode(sig, Pq.Ed25519SignatureBytes);
-            if (edSig == null) return false;
+            if (edSig == null) return false; // defence in depth: VerifyB64u above already decoded this same 64-byte sig
             pqMsg = [.. msg, .. edSig];
         }
         return PqVerifyB64u(suite.Pq, pq.Key, pqMsg, pqSig);
@@ -882,7 +881,7 @@ public static partial class Pca
 
     /// <summary>Verify <paramref name="p"/>'s signature(s) under its suite. The PQ half verifies ONLY under
     /// <paramref name="pq"/>, never under <c>p["pq_pk"]</c>. FAIL-CLOSED.</summary>
-    static bool VerifySuite(Dictionary<string, object?> p, object? holder, byte[] msg, PinnedPq? pq)
+    internal static bool VerifySuite(Dictionary<string, object?> p, object? holder, byte[] msg, PinnedPq? pq)
     {
         var (name, _) = ResolveSuite(p);
         if (name == null) return false;
@@ -909,8 +908,8 @@ public static partial class Pca
 
     /// <summary>Registered PQ public-key lengths of every suite (ml-dsa-65/87, slh-dsa-128f/256s, fn-dsa-512/1024, less-cat1),
     /// whether or not this SDK implements the suite: a signer set is validated exactly like the reference.</summary>
-    static readonly HashSet<int> PqPkLengths = new() { 1952, 2592, 32, 64, 897, 1793, 97484 };
-    static readonly HashSet<string> SignerRoles = new() { "agent", "guardian", "principal" };
+    static HashSet<int> PqPkLengths => new() { 1952, 2592, 32, 64, 897, 1793, 97484 };
+    static HashSet<string> SignerRoles => new() { "agent", "guardian", "principal" };
 
     /// <summary>R6-03: validate the WHOLE signer set like the reference (decideThreshold BuildReg): every entry an object with
     /// a known role and a canonical 32-byte publicKey; a present pq_pk (JSON null is present) canonical base64url of a
@@ -919,17 +918,19 @@ public static partial class Pca
     static Dictionary<string, (string Pk, string? Pq)>? ValidateSignerSet(List<object?> signerSet)
     {
         var reg = new Dictionary<string, (string Pk, string? Pq)>();
+        var signerRoles = SignerRoles;
+        var pqPkLengths = PqPkLengths;
         foreach (var e in signerSet)
         {
             if (e is not Dictionary<string, object?> o) return null;
-            if (Get(o, "role") is not string role || !SignerRoles.Contains(role)) return null;
+            if (Get(o, "role") is not string role || !signerRoles.Contains(role)) return null;
             if (Get(o, "publicKey") is not string pk || B64uDecode(pk, 32) == null) return null;
             string? pq = null;
             if (Has(o, "pq_pk"))
             {
                 if (Get(o, "pq_pk") is not string ps) return null;
                 var pb = B64uDecode(ps);
-                if (pb == null || !PqPkLengths.Contains(pb.Length)) return null;
+                if (pb == null || !pqPkLengths.Contains(pb.Length)) return null;
                 pq = ps;
             }
             if (reg.TryGetValue(role, out var prev))
@@ -1000,7 +1001,7 @@ public static partial class Pca
             var reg = ValidateSignerSet(signerSet);
             if (reg == null) return false;
             var ssh = SignerSetHash(signerSet);
-            if (ssh == null) return false;
+            if (ssh == null) return false; // defence in depth: ValidateSignerSet passed (object entries, fixed ASCII roles, base64url keys)
             if (Get(entry, "share") is not Dictionary<string, object?> share) return false;
             if (Get(share, "publicKey") is not string pk) return false;
             if (Get(share, "role") is not string srole || srole != role) return false;
@@ -1022,7 +1023,7 @@ public static partial class Pca
                 // PQ key = the signer set's registered pq_pk, never the share's own.
                 if (r.Pq == null) return false;
                 pqPk = r.Pq;
-                if (alg != null && Pq.Suites.ContainsKey(alg)) tag = Encoding.UTF8.GetBytes(ShareSuiteTag + alg);
+                tag = Encoding.UTF8.GetBytes(ShareSuiteTag + alg); // an unimplemented alg fails in VerifySuiteSig whatever the tag
             }
             // Bound share message: domain(role) || sha256(thresholdMessage) || signerSetHash || t [|| suite tag].
             var msg = Cat(
@@ -1069,7 +1070,7 @@ public static partial class Pca
         var bd = Get(c, "body_digest") as string; var id = Get(c, "id") as string;
         if (digest != bd || id != bd) return label + ": body digest mismatch";
         var d = B64uDecode(bd, 32);
-        if (d == null) return label + ": bad signature (not signed by expected key)";
+        if (d == null) return label + ": bad signature (not signed by expected key)"; // defence in depth: bd == digest, a HashCanonical output
         // Suite-agile hop verification (mirrors VerifySuite): ed25519 == VerifyB64u(signer, msg, sig);
         // hybrid requires BOTH the Ed25519 `sig` (under `signer`) AND the ML-DSA `pq_sig` (under the resolved `pq` key);
         // pure ml-dsa-65 verifies `sig` under it (never the hop's own pq_pk). The signer is the expected Ed25519 key.
@@ -1126,7 +1127,7 @@ public static partial class Pca
         string? trusted = null;
         if (trustedRoot != null && pk is string tpk)
         {
-            try { if (CapHash(trustedRoot) == CapHash(root)) trusted = tpk; } catch { trusted = null; }
+            try { if (CapHash(trustedRoot) == CapHash(root)) trusted = tpk; } catch { /* not canonicalisable: trusted stays null (fail closed) */ }
         }
         // 0.4.2 fail closed: with the stored grant AND a pin for the issuer, both must agree (the grant never overrides a pin).
         if (trusted != null && pqPins != null && Get(root, "issuer") is string riss && pqPins.TryGetValue(riss, out var rpin) && rpin != trusted)
@@ -1177,24 +1178,46 @@ public static partial class Pca
             var unbound = PqBindingError(c, Get(parent, "holder_pq"), label);
             if (unbound != null) return (unbound, false);
             e = CheckSig(c, Get(parent, "holder"), label,
-                PinnedPq.Resolve(Get(parent, "holder") as string, Get(c, "pq_pk"), holderPq: Get(parent, "holder_pq")));
+                PinnedPq.Resolve(null, Get(c, "pq_pk"), holderPq: Get(parent, "holder_pq"))); // identity only selects a pin; a hop has none
             if (e != "") return (e, false);
             var pc = (List<object?>)Get(parent, "caveats")!;
-            var cc = (List<object?>)Get(c, "caveats")!;
+            if (Get(c, "caveats") is not List<object?> cc) return ("malformed caveats", false);
             if (cc.Count < pc.Count) return (label + ": drops parent caveat(s)", false);
             for (int j = 0; j < pc.Count; j++)
                 if (HashCanonical(cc[j]) != HashCanonical(pc[j])) return ($"{label}: caveat {j} altered or reordered", false);
         }
-        return ("", true);
+        // the leaf holds the full append-only list
+        return AllocationsMonotone(Get((Dictionary<string, object?>)chain[^1]!, "caveats")) is string alloc ? (alloc, false) : ("", true);
+    }
+
+    /// <summary>Carried budget allocations are monotone non-increasing in delegation order; each limit finite and &gt;= 0. The reason, or null.</summary>
+    internal static string? AllocationsMonotone(object? caveatList)
+    {
+        if (caveatList is not List<object?> caveats) return "malformed caveats";
+        double prev = double.PositiveInfinity;
+        for (int i = 0; i < caveats.Count; i++)
+        {
+            if (caveats[i] is not Dictionary<string, object?> cv || Get(cv, "type") as string != "budget_alloc") continue;
+            if (Fin(Get(cv, "limit")) is not double lim || lim < 0) return $"budget_alloc caveat {i}: limit must be a finite number >= 0";
+            if (lim > prev)
+                return $"budget_alloc caveat {i}: allocation {JsCanon.NumberString(lim)} widens the parent's carried allocation {JsCanon.NumberString(prev)} (monotone: a child can only allocate <= its parent)";
+            prev = lim;
+        }
+        return null;
     }
 
     // ================= wire form (README sections 1, 3, 5) =================
-    static readonly string[] Required = { "ver", "action", "grant_ref", "cap_chain", "plan", "attestation", "provenance", "freshness", "counter", "risk_claim", "aud", "iat", "exp", "sig" };
-    static readonly string[] Optional = { "nonce", "caution", "rationale_commitment", "progress_step", "prohibition_evidence", "tool_binding", "threshold", "zk_compliance", "bond_ref",
+    static string[] Required => new string[] { "ver", "action", "grant_ref", "cap_chain", "plan", "attestation", "provenance", "freshness", "counter", "risk_claim", "aud", "iat", "exp", "sig" };
+    internal const string ZkUnenforced = "PCActn carries a zk_compliance proof but no zk verifier enforced it (fail closed): configure hooks.zk or do not present a proof";
+
+    static string[] Optional => new string[]
+    { "nonce", "caution", "rationale_commitment", "progress_step", "prohibition_evidence", "tool_binding", "threshold", "zk_compliance", "bond_ref",
         // Intent Layer M2 (additive, SIGNED): the `envelope.intent` binding (see ValidateIntentWire / DecideIntent).
         "intent",
         // Intent Layer v2 (additive, SIGNED): the session member (rule 13; see IntentSession.ValidateWire / IntentV2).
         "intent_session",
+        // Consistency token (additive, SIGNED): the `fresh_at` member (see FreshAt / FreshAtPolicy).
+        "fresh_at",
         // B4 crypto-agility (additive): absent `alg` == "ed25519" and validates exactly as today.
         "alg", "pq_pk", "pq_sig" };
 
@@ -1207,8 +1230,10 @@ public static partial class Pca
         try
         {
             if (o is not Dictionary<string, object?> p) return "PCActn is not an object";
-            foreach (var k in p.Keys) if (!Required.Contains(k) && !Optional.Contains(k)) return $"unknown field '{k}'";
-            foreach (var k in Required) if (!p.ContainsKey(k)) return $"missing field '{k}'";
+            var required = Required;
+            var optional = Optional;
+            foreach (var k in p.Keys) if (!required.Contains(k) && !optional.Contains(k)) return $"unknown field '{k}'";
+            foreach (var k in required) if (!p.ContainsKey(k)) return $"missing field '{k}'";
             var body = p.Where(kv => kv.Key != "sig" && kv.Key != "threshold" && kv.Key != "pq_sig").ToDictionary(kv => kv.Key, kv => kv.Value);
             try { Canonicalize(body); } catch (Exception e) { return e.Message; }
 
@@ -1277,6 +1302,7 @@ public static partial class Pca
             if (p.TryGetValue("progress_step", out var ps) && ps is not Dictionary<string, object?>) return "'progress_step' must be an object";
             if (p.TryGetValue("intent", out var itn)) { var intentErr = ValidateIntentWire(itn); if (intentErr != null) return intentErr; }
             if (p.TryGetValue("intent_session", out var isn)) { var sessionErr = IntentSession.ValidateWire(isn); if (sessionErr != null) return sessionErr; }
+            if (p.TryGetValue("fresh_at", out var fan)) { var freshErr = FreshAt.WireError(fan); if (freshErr != null) return freshErr; }
             if (p.TryGetValue("prohibition_evidence", out var pe) && pe is not Dictionary<string, object?> && pe is not List<object?>) return "'prohibition_evidence' must be an object or array";
             if (p.TryGetValue("threshold", out var th))
             {
@@ -1302,7 +1328,7 @@ public static partial class Pca
     public const long PpmOne = 1_000_000;
     public const int MaxIntentGoalSaltLen = 128;
     /// <summary>Closed member set of <c>envelope.intent</c> (all required).</summary>
-    static readonly string[] EnvelopeIntentFields = { "ref", "map_digest", "goal_salt", "fidelity_ppm", "residual_risk_ppm" };
+    static string[] EnvelopeIntentFields => new string[] { "ref", "map_digest", "goal_salt", "fidelity_ppm", "residual_risk_ppm" };
 
     /// <summary>The goal string that binds a grant to an intent statement and Intent Map.</summary>
     public static string IntentGoal(string reference, string? mapDigest = null) =>
@@ -1311,6 +1337,19 @@ public static partial class Pca
     /// <summary>The goal commitment an <c>envelope.intent</c> claims the root grant carries.</summary>
     public static string IntentGoalCommit(string reference, string mapDigest, string goalSalt) =>
         HashCanonical(new Dictionary<string, object?> { ["d"] = IntentGoalCommitDomain, ["goal"] = IntentGoal(reference, mapDigest), ["salt"] = goalSalt });
+
+    public const string IntentGoalV3Prefix = "pca-intent:v3:";
+
+    /// <summary>The v3 goal string <c>pca-intent:v3:&lt;goal_digest&gt;:&lt;policy_digest&gt;</c>. A malformed digest throws: never commit to garbage.</summary>
+    public static string IntentGoalV3(ApprovedGoalRef approved)
+    {
+        if (approved is null || !approved.IsValid) throw new ArgumentException("IntentGoalV3: goal_digest and policy_digest must be canonical base64url (32 bytes)");
+        return IntentGoalV3Prefix + approved.GoalDigest + ":" + approved.PolicyDigest;
+    }
+
+    /// <summary>The v3 goal commitment for a salt (same domain and hash as <see cref="IntentGoalCommit"/>).</summary>
+    public static string IntentGoalCommitV3(ApprovedGoalRef approved, string goalSalt) =>
+        HashCanonical(new Dictionary<string, object?> { ["d"] = IntentGoalCommitDomain, ["goal"] = IntentGoalV3(approved), ["salt"] = goalSalt });
 
     /// <summary>Intent Layer v2 (rule 13 amends rule 12 step 2): the goal commitment when the PCActn carries a wire-valid
     /// <c>intent_session</c>: the goal is <c>"pca-intent:v2:" + session + ":" + map_digest</c>.</summary>
@@ -1326,8 +1365,9 @@ public static partial class Pca
     public static string? ValidateIntentWire(object? o)
     {
         if (o is not Dictionary<string, object?> v) return "'intent' must be an object";
-        foreach (var k in v.Keys) if (!EnvelopeIntentFields.Contains(k)) return $"unknown field 'intent.{k}'";
-        foreach (var k in EnvelopeIntentFields) if (!v.ContainsKey(k)) return $"missing field 'intent.{k}'";
+        var envelopeIntentFields = EnvelopeIntentFields;
+        foreach (var k in v.Keys) if (!envelopeIntentFields.Contains(k)) return $"unknown field 'intent.{k}'";
+        foreach (var k in envelopeIntentFields) if (!v.ContainsKey(k)) return $"missing field 'intent.{k}'";
         if (B64uDecode(v["ref"], 32) == null) return "'intent.ref' is not canonical base64url (32 bytes)";
         if (B64uDecode(v["map_digest"], 32) == null) return "'intent.map_digest' is not canonical base64url (32 bytes)";
         if (v["goal_salt"] is not string salt || salt.Length == 0 || Encoding.UTF8.GetByteCount(salt) > MaxIntentGoalSaltLen)
@@ -1341,7 +1381,7 @@ public static partial class Pca
     public static bool OkThreshold(double? x)
     {
         if (x is not double d) return true;
-        if (double.IsNaN(d) || double.IsInfinity(d) || d != Math.Round(d)) return false;
+        if (d != Math.Round(d)) return false; // NaN != NaN; +-Infinity fail the range check below
         if (d == 0 && BitConverter.DoubleToInt64Bits(d) != 0) return false; // -0
         return d >= 0 && d <= 9007199254740991.0;
     }
@@ -1376,17 +1416,22 @@ public static partial class Pca
         {
             if (active && (!OkThreshold(policy!.MinFidelityPpm) || !OkThreshold(policy.MaxResidualRiskPpm)))
                 return "intent policy misconfigured: thresholds must be non-negative safe integers (fail closed)";
+            if (active && (policy!.ApprovedGoalMisconfigured || (policy.ApprovedGoal != null && !policy.ApprovedGoal.IsValid)))
+                return "intent policy misconfigured: approved_goal digests must be canonical base64url (32 bytes) (fail closed)";
             if (!present) return "this verifier requires an intent binding but the PCActn carries none";
             var commit = RootGoalCommit(grant);
             if (commit == null) return "the root grant carries no envelope goal commitment to bind the intent to";
             var i = (Dictionary<string, object?>)intent!;
-            var opened = session != null
+            var v3 = policy?.ApprovedGoal;
+            var opened = v3 != null ? IntentGoalCommitV3(v3, (string)i["goal_salt"]!)
+                : session != null
                 ? (mapForm as string == IntentMap.MapFormCommit
                     ? IntentGoalCommitV2c(session, (string)i["map_digest"]!, (string)i["goal_salt"]!)
                     : IntentGoalCommitV2(session, (string)i["map_digest"]!, (string)i["goal_salt"]!))
                 : IntentGoalCommit((string)i["ref"]!, (string)i["map_digest"]!, (string)i["goal_salt"]!);
             if (opened != commit)
-                return "intent ref / map_digest / goal_salt do not open the root grant's goal commitment";
+                return v3 != null ? "the root grant's goal commitment does not open to the approved goal and compiled policy (v3)"
+                    : "intent ref / map_digest / goal_salt do not open the root grant's goal commitment";
             TryInt(i["fidelity_ppm"], out var fid);
             TryInt(i["residual_risk_ppm"], out var risk);
             if (policy?.MinFidelityPpm is double min && !(fid >= min))
@@ -1411,11 +1456,11 @@ public static partial class Pca
 
     /// <summary>Verify RAW signed bytes: strict-parse (a parse failure or non-object is a `wire` failure), then verify.</summary>
     /// <remarks><paramref name="intentPolicy"/> (Intent Layer M2, optional): the <c>intent</c> check is reported after
-    /// <c>counter</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
+    /// <c>counter_format</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
     /// <remarks><paramref name="intentV2"/> (Intent Layer v2, optional): the verifier state of rules 13-18; the v2 checks are
     /// reported after <c>intent</c> exactly when <see cref="IntentV2"/> reports them.</remarks>
     public static Verdict VerifyRaw(string pcactnJson, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null,
-        IntentPolicy? intentPolicy = null, IntentV2Context? intentV2 = null)
+        IntentPolicy? intentPolicy = null, IntentV2Context? intentV2 = null, FreshAtPolicy? freshAt = null, PlanRootPolicy? planRoots = null)
     {
         object? tree;
         if (pcactnJson == null) // R6-05: total entry point (a null document is a wire failure, not a NullReferenceException)
@@ -1437,29 +1482,35 @@ public static partial class Pca
             v.Checks["wire"] = false;
             return v;
         }
-        return VerifyPcactnCore(tree, grant, now, audience, allowedSuites, intentPolicy, intentV2);
+        return VerifyPcactnCore(tree, grant, now, audience, allowedSuites, intentPolicy, intentV2, freshAt, planRoots);
     }
 
     /// <remarks><paramref name="intentPolicy"/> (Intent Layer M2, optional): the <c>intent</c> check is reported after
-    /// <c>counter</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
+    /// <c>counter_format</c> iff the PCActn carries <c>intent</c> or the policy is active; otherwise the verdict is the pre-M2 one.</remarks>
     /// <remarks><paramref name="intentV2"/> (Intent Layer v2, optional): the verifier state of rules 13-18 (<see cref="IntentV2Context"/>).
     /// A PCActn without <c>intent_session</c> under a context without an active v2 policy verifies exactly as before.</remarks>
     public static Verdict VerifyPcactnCore(object? pcactn, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites = null,
-        IntentPolicy? intentPolicy = null, IntentV2Context? intentV2 = null)
+        IntentPolicy? intentPolicy = null, IntentV2Context? intentV2 = null, FreshAtPolicy? freshAt = null, PlanRootPolicy? planRoots = null)
     {
         // TOTAL (R6-05): the wire check runs outside the per-check try below, so guard the whole entry point.
-        try { return VerifyPcactnCoreUnchecked(pcactn, grant, now, audience, allowedSuites, intentPolicy, intentV2); }
-        catch (Exception ex)
-        {
-            var v = new Verdict { Allow = false, Reason = "wire: malformed input (" + ex.GetType().Name + ")" };
-            v.Checks.Clear();
-            v.Checks["wire"] = false;
-            return v;
-        }
+        try { return VerifyPcactnCoreUnchecked(pcactn, grant, now, audience, allowedSuites, intentPolicy, intentV2, freshAt, planRoots); }
+        catch (Exception ex) { return MalformedInput(ex); }
     }
 
+    /// <summary>The verdict for an exception that escapes the core (defence in depth: the core is total today).</summary>
+    internal static Verdict MalformedInput(Exception ex)
+    {
+        var v = new Verdict { Allow = false, Reason = "wire: malformed input (" + ex.GetType().Name + ")" };
+        v.Checks["wire"] = false; // a fresh verdict: { wire: false } only
+        return v;
+    }
+
+    static readonly AsyncLocal<Action?> CoreFaultSlot = new();
+    /// <summary>Test seam: runs after every core check, just before the verdict is set (a fault there must deny as malformed).</summary>
+    internal static Action? CoreFaultHook { get => CoreFaultSlot.Value; set => CoreFaultSlot.Value = value; }
+
     static Verdict VerifyPcactnCoreUnchecked(object? pcactn, Dictionary<string, object?> grant, long now, string audience, IReadOnlyCollection<string>? allowedSuites,
-        IntentPolicy? intentPolicy, IntentV2Context? intentV2)
+        IntentPolicy? intentPolicy, IntentV2Context? intentV2, FreshAtPolicy? freshAt, PlanRootPolicy? planRoots)
     {
         var v = new Verdict();
         var wire = ValidateWire(pcactn);
@@ -1470,14 +1521,15 @@ public static partial class Pca
         }
         var p = (Dictionary<string, object?>)pcactn!;
         v.Checks["wire"] = true;
-        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" }) v.Checks[k] = false;
-        // Intent Layer M2: `intent` is reported (after counter) iff the PCActn carries intent or the policy is active.
+        foreach (var k in new[] { "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" }) v.Checks[k] = false;
+        // Intent Layer M2: `intent` is reported (after counter_format) iff the PCActn carries intent or the policy is active.
         bool intentPresent = p.ContainsKey("intent");
         if (intentPresent || intentPolicy is { IsActive: true }) v.Checks["intent"] = false;
         bool failed = false;
         void Fail(string name, string why)
         {
             failed = true; v.Checks[name] = false;
+            if (name == "plan_root_authorized") v.PlanRootAuthorized = "fail";
             if (v.Reason == "") v.Reason = name + ": " + why;
         }
         try
@@ -1501,15 +1553,16 @@ public static partial class Pca
             else if (CapHash(chain[0]) != CapHash(grant)) Fail("chain", "chain root is not the grant");
             else
             {
+                // the expected root issuer is the grant's, as the reference (pcactn.ts verifyChain(chain, opts.grant.issuer)); chain[0] == grant was checked above
                 var gi = Get(grant, "issuer");
-                var (why, ok) = VerifyChain(chain, gi, gi != null, allowedSuites, trustedRoot: grant); // chain[0] == grant was checked above
+                var (why, ok) = VerifyChain(chain, gi, gi != null, allowedSuites, trustedRoot: grant);
                 if (ok) v.Checks["chain"] = true; else Fail("chain", why);
             }
 
             // grant_ref_bound (normative): the signed grant_ref MUST be a non-empty string byte-equal to the id of the
             // ROOT capability of the presented chain (cap_chain[0].id). Independent of the chain verdict; fail-closed
             // on an empty / malformed chain. Replay state is keyed on grant_ref, so it must not be attacker-chosen.
-            if (p.TryGetValue("grant_ref", out var grefObj) && grefObj is string gref && gref.Length > 0
+            if (p.TryGetValue("grant_ref", out var grefObj) && grefObj is string gref && gref.Length > 0 // the wire already refuses an empty one (32-byte digest); kept as the reference's guard
                 && chain.Count > 0 && chain[0] is Dictionary<string, object?> rootCap
                 && rootCap.TryGetValue("id", out var rootIdObj) && rootIdObj is string rootId
                 && string.Equals(gref, rootId, StringComparison.Ordinal)) v.Checks["grant_ref_bound"] = true;
@@ -1523,32 +1576,48 @@ public static partial class Pca
             var leaf = PlanLeaf(Get(plan, "node_id"), action, cond);
             if (leaf != null && VerifyInclusion(root, proof, leaf)) v.Checks["plan_inclusion"] = true;
             else Fail("plan_inclusion", "action is not a node of the committed plan");
+            // the principal's authorization of the committed plan: a given list is enforced (even empty), otherwise default-deny unless explicitly skipped
+            if (planRoots?.AuthorizedRoots is { } authorizedRoots)
+            {
+                if (authorizedRoots.Contains(root)) v.PlanRootAuthorized = "pass";
+                else Fail("plan_root_authorized", "the plan root has not been authorized by the principal");
+            }
+            else if (planRoots?.InsecureSkip == true) v.PlanRootAuthorized = "not-enforced";
+            else Fail("plan_root_authorized", "no authorized plan is configured for this verifier (set authorizedPlanRoots, or the explicit insecureSkipPlanRootCheck)");
 
             var leafCapObj = chain.Count > 0 ? chain[^1] as Dictionary<string, object?> : null;
-            var leafErr = leafCapObj == null ? null
-                : SuitePolicyError(Get(p, "alg"), "leaf", allowedSuites) ?? PqBindingError(p, Get(leafCapObj, "holder_pq"), "leaf");
+            // a null leaf cap means the chain check already failed (its reason wins); leaf_signature fails below either way
+            var leafErr = SuitePolicyError(Get(p, "alg"), "leaf", allowedSuites) ?? PqBindingError(p, Get(leafCapObj, "holder_pq"), "leaf");
             if (leafErr != null) Fail("leaf_signature", leafErr);
             else if (leafCapObj != null && VerifySuite(p, Get(leafCapObj, "holder"), ThresholdMessage(p),
-                PinnedPq.Resolve(Get(leafCapObj, "holder") as string, Get(p, "pq_pk"), holderPq: Get(leafCapObj, "holder_pq")))) v.Checks["leaf_signature"] = true;
+                PinnedPq.Resolve(null, Get(p, "pq_pk"), holderPq: Get(leafCapObj, "holder_pq")))) v.Checks["leaf_signature"] = true; // no pins at the leaf
             else Fail("leaf_signature", "signature does not verify under the leaf holder key");
 
-            if (counter >= 0) v.Checks["counter"] = true;
-            else Fail("counter", "missing or not a non-negative safe integer");
+            if (counter >= 0) v.Checks["counter_format"] = true;
+            else Fail("counter_format", "missing or not a non-negative safe integer");
 
             var intentWhy = DecideIntent(Get(p, "intent"), intentPresent, grant, intentPolicy, Get(Get(p, "intent_session") as Dictionary<string, object?>, "session") as string,
                 Get(Get(p, "intent_session") as Dictionary<string, object?>, "map_form"));
             if (intentWhy == "") v.Checks["intent"] = true;
             else if (intentWhy != null) Fail("intent", intentWhy);
 
+            // a carried proof asserts a compliance guarantee: unverified, it is never silently accepted, at any layer
+            if (p.ContainsKey("zk_compliance")) Fail("zk_compliance", ZkUnenforced);
+
+            CoreFaultHook?.Invoke();
             v.Allow = !failed;
         }
         catch (Exception ex)
         {
+            // as the reference's CoreMalformed (pca-verified-core verdict.ts): checks.malformed = fail, reason ??= why
             v.Allow = false;
-            v.Reason = "malformed PCActn: " + ex.Message;
+            v.Checks["malformed"] = false;
+            if (v.Reason == "") v.Reason = "malformed PCActn: " + ex.Message;
         }
-        // Intent Layer v2 (rules 13-18): reported in pipeline order exactly when IntentV2 reports them (total: never throws)
-        foreach (var c in IntentV2.Decide(p, grant, intentV2, now).Checks)
+        // Intent Layer v2 (rules 13-21): reported in pipeline order exactly when IntentV2 reports them (total: never throws)
+        var v2d = IntentV2.Decide(p, grant, intentV2, now);
+        v.LegacyModelPolarity = v2d.Legacy;
+        foreach (var c in v2d.Checks)
         {
             v.Checks[c.Name] = c.Ok;
             if (!c.Ok)
@@ -1557,6 +1626,17 @@ public static partial class Pca
                 if (v.Reason == "") v.Reason = c.Name + ": " + c.Reason;
             }
         }
+        // Consistency token: `fresh_at` (reported only when the PCActn carries the member, a side-carried token is read, or the policy requires one).
+        // Like the reference, a failure here is the verdict's reason only when no earlier check failed.
+        var fa = FreshAt.Decide(Get(p, "fresh_at"), p.ContainsKey("fresh_at"), freshAt, now);
+        if (fa.Status == "pass") v.Checks["fresh_at"] = true;
+        else if (fa.Status == "fail")
+        {
+            v.Checks["fresh_at"] = false;
+            v.Allow = false;
+            if (v.Reason == "") v.Reason = "fresh_at: " + fa.Reason;
+        }
+        if (!v.Allow) v.Reasons = PcaDecision.FoldV2Reasons(new[] { v.Reason }, v2d.Checks.Select(c => new PcaDecision.V2CheckResult(c.Name, c.Ok, c.Reason)));
         return v;
     }
 }

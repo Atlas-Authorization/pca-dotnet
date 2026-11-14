@@ -24,12 +24,13 @@ public static class IntentAcc
     public const long DefaultMaxReceiptAgeMs = 900_000L;
     /// <summary>Default bound on a key set's age, policy <c>acc.max_keyset_age_s</c> (1 h).</summary>
     public const long DefaultMaxKeySetAgeMs = 3_600_000L;
-    static readonly string[] AccAggs = { "sum", "count", "distinct", "max" };
-    static readonly string[] MonitorKinds = { "requires_prior", "precedes", "never", "always", "responds_within" };
-    static readonly Regex KidRe = new(@"^[A-Za-z0-9_.:-]{1,64}\z", RegexOptions.CultureInvariant);
-    static readonly Regex ParamPathRe = new(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
-    static readonly Regex UnitRe = new(@"^[a-z0-9_]+(?:\.[a-z0-9_]+)*\z", RegexOptions.CultureInvariant);
-    static readonly string[] ReceiptKeys = { "v", "kind", "session", "acc", "seq", "pre", "delta", "post", "pcactn_digest", "aud", "issued_at",
+    static string[] AccAggs => new string[] { "sum", "count", "distinct", "max" };
+    static string[] MonitorKinds => new string[] { "requires_prior", "precedes", "never", "always", "responds_within" };
+    static Regex KidRe => Rx.Get(@"^[A-Za-z0-9_.:-]{1,64}\z", RegexOptions.CultureInvariant);
+    static Regex ParamPathRe => Rx.Get(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
+    static Regex UnitRe => Rx.Get(@"^[a-z0-9_]+(?:\.[a-z0-9_]+)*\z", RegexOptions.CultureInvariant);
+    static string[] ReceiptKeys => new string[]
+    { "v", "kind", "session", "acc", "seq", "pre", "delta", "post", "pcactn_digest", "aud", "issued_at",
         "expires_at", "kid", "ledger", "signer", "alg", "pq_pk", "sig", "pq_sig" };
 
     static bool IdOk(object? v) => v is string s && IntentSession.AccIdRe.IsMatch(s);
@@ -248,7 +249,8 @@ public static class IntentAcc
     internal static string? ReceiptShapeError(object? rO)
     {
         if (rO is not D r) return "receipt is not an object";
-        foreach (var k in r.Keys) if (!ReceiptKeys.Contains(k)) return $"receipt: unknown member '{k}'";
+        var receiptKeys = ReceiptKeys;
+        foreach (var k in r.Keys) if (!receiptKeys.Contains(k)) return $"receipt: unknown member '{k}'";
         if (!OracleFacts.IsOne(IntentJs.Get(r, "v")) || IntentJs.Get(r, "kind") as string != "pca-acc-receipt") return "not a pca-acc-receipt v1";
         if (!IntentJs.B32(IntentJs.Get(r, "session"))) return "receipt.session is not canonical base64url (32 bytes)";
         if (!IdOk(IntentJs.Get(r, "acc"))) return "receipt.acc is not an accumulator id";
@@ -316,10 +318,11 @@ public static class IntentAcc
         if (!IntentJs.IsNonNeg(IntentJs.Get(k, "issued_at"))) return "issued_at must be a non-negative safe integer";
         if (IntentJs.Get(k, "keys") is not L keys || keys.Count == 0 || keys.Count > 256) return "keys must be 1..256 entries";
         var kids = new HashSet<string>();
+        var kidRe = KidRe;
         foreach (var eO in keys)
         {
             if (eO is not D e || e.Keys.Any(x => x is not ("kid" or "pk" or "alg" or "pq_pk" or "not_before" or "not_after"))) return "keys entries are {kid, pk, alg?, pq_pk?, not_before, not_after?}";
-            if (IntentJs.Get(e, "kid") is not string kid || !KidRe.IsMatch(kid) || !kids.Add(kid)) return "key kids must match [A-Za-z0-9_.:-]{1,64} and be distinct";
+            if (IntentJs.Get(e, "kid") is not string kid || !kidRe.IsMatch(kid) || !kids.Add(kid)) return "key kids must match [A-Za-z0-9_.:-]{1,64} and be distinct";
             if (!IntentJs.B32(IntentJs.Get(e, "pk"))) return "key pk is not canonical base64url (32 bytes)";
             var kse = IntentJs.SuiteError(e.GetValueOrDefault("alg"), e.ContainsKey("alg"));
             if (kse != null) return "key alg: " + kse;

@@ -18,10 +18,11 @@ public static class IntentSession
     public const long MaxSessionSeq = 2_147_483_647L;
     public const int MaxIsAcc = 16, MaxIsFacts = 16, MaxIsProvPaths = 32, MaxIsProvRefs = 8, MaxIsClasses = 8, MaxIsLabels = 16, MaxIsStringBytes = 256;
     public const int MaxSessionPrincipals = 16;
-    static readonly string[] IntentSessionFields = { "session", "root", "seq", "schema", "acc", "facts", "offer_set", "prov", "classes", "labels", "map_form" };
-    internal static readonly Regex AccIdRe = new(@"^[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
-    static readonly Regex ProvKeyRe = new(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
-    static readonly string[] RootKeys = { "v", "kind", "session", "principals", "intent_ref", "schema", "layers", "accumulators", "monitors",
+    static string[] IntentSessionFields => new string[] { "session", "root", "seq", "schema", "acc", "facts", "offer_set", "prov", "classes", "labels", "map_form" };
+    internal static Regex AccIdRe => Rx.Get(@"^[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
+    static Regex ProvKeyRe => Rx.Get(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
+    static string[] RootKeys => new string[]
+    { "v", "kind", "session", "principals", "intent_ref", "schema", "layers", "accumulators", "monitors",
         "question_uri", "revocation", "flows", "expires_at", "signer", "alg", "pq_pk", "sig", "pq_sig" };
 
     static bool ShortStr(object? v) => v is string s && s.Length > 0 && !Pca.HasLoneSurrogate(s) && IntentJs.U8Len(s) <= MaxIsStringBytes;
@@ -38,7 +39,8 @@ public static class IntentSession
     public static string? ValidateWire(object? vO)
     {
         if (vO is not D v) return "'intent_session' must be an object";
-        foreach (var k in v.Keys) if (!IntentSessionFields.Contains(k)) return $"unknown field 'intent_session.{k}'";
+        var intentSessionFields = IntentSessionFields;
+        foreach (var k in v.Keys) if (!intentSessionFields.Contains(k)) return $"unknown field 'intent_session.{k}'";
         foreach (var k in new[] { "session", "root", "seq", "schema" }) if (!v.ContainsKey(k)) return $"missing field 'intent_session.{k}'";
         foreach (var k in new[] { "session", "root", "schema" }) if (!IntentJs.B32(v[k])) return $"'intent_session.{k}' is not canonical base64url (32 bytes)";
         if (!IntentJs.IsNonNeg(v["seq"]) || IntentJs.NumOf(v["seq"]) > MaxSessionSeq) return "'intent_session.seq' must be a safe integer in [0, 2147483647]";
@@ -46,11 +48,12 @@ public static class IntentSession
         {
             if (v["acc"] is not L acc || acc.Count > MaxIsAcc) return $"'intent_session.acc' must be an array of at most {MaxIsAcc} entries";
             var ids = new HashSet<string>();
+            var accIdRe = AccIdRe;
             for (int i = 0; i < acc.Count; i++)
             {
                 if (acc[i] is not D a) return $"'intent_session.acc[{i}]' must be an object";
                 foreach (var k in a.Keys) if (k != "id" && k != "post" && k != "receipt") return $"unknown field 'intent_session.acc[{i}].{k}'";
-                if (IntentJs.Get(a, "id") is not string id || !AccIdRe.IsMatch(id)) return $"'intent_session.acc[{i}].id' must match [A-Za-z0-9_]{{1,64}}";
+                if (IntentJs.Get(a, "id") is not string id || !accIdRe.IsMatch(id)) return $"'intent_session.acc[{i}].id' must match [A-Za-z0-9_]{{1,64}}";
                 if (!ids.Add(id)) return "'intent_session.acc' ids must be distinct";
                 if (!IntentJs.IsNonNeg(IntentJs.Get(a, "post"))) return $"'intent_session.acc[{i}].post' must be a non-negative safe integer";
                 if (a.ContainsKey("receipt") && !IntentJs.B32(a["receipt"])) return $"'intent_session.acc[{i}].receipt' is not canonical base64url (32 bytes)";
@@ -61,9 +64,10 @@ public static class IntentSession
         if (v.ContainsKey("prov"))
         {
             if (v["prov"] is not D prov || prov.Count > MaxIsProvPaths) return $"'intent_session.prov' must be an object of at most {MaxIsProvPaths} entries";
+            var provKeyRe = ProvKeyRe;
             foreach (var (path, refs) in prov)
             {
-                if (!ProvKeyRe.IsMatch(path)) return $"'intent_session.prov' key '{path}' is not action.params.<name>";
+                if (!provKeyRe.IsMatch(path)) return $"'intent_session.prov' key '{path}' is not action.params.<name>";
                 if (refs is not L rl || rl.Count == 0 || rl.Count > MaxIsProvRefs || !rl.All(ShortStr))
                     return $"'intent_session.prov.{path}' must be 1..{MaxIsProvRefs} non-empty strings of at most {MaxIsStringBytes} UTF-8 bytes";
             }
@@ -96,7 +100,7 @@ public static class IntentSession
         return null;
     }
 
-    static bool KeysAre(object? o, params string[] keys) => o is D m && m.Count == keys.Length && keys.All(m.ContainsKey);
+    internal static bool KeysAre(object? o, params string[] keys) => o is D m && m.Count == keys.Length && keys.All(m.ContainsKey);
 
     /// <summary>Structural validation of a signed session root. Null = well-formed. Never throws.</summary>
     public static string? RootShapeError(object? sO)
@@ -104,7 +108,8 @@ public static class IntentSession
         try
         {
             if (sO is not D s) return "session root is not an object";
-            foreach (var k in s.Keys) if (!RootKeys.Contains(k)) return $"session root: unknown member '{k}'";
+            var rootKeys = RootKeys;
+            foreach (var k in s.Keys) if (!rootKeys.Contains(k)) return $"session root: unknown member '{k}'";
             if (!OracleFacts.IsOne(IntentJs.Get(s, "v")) || IntentJs.Get(s, "kind") as string != IntentSessionKind) return "not a pca-intent-session v1";
             if (!IntentJs.B32(IntentJs.Get(s, "session")) || !IntentJs.B32(IntentJs.Get(s, "intent_ref"))) return "session and intent_ref must be canonical base64url (32 bytes)";
             if (IntentJs.Get(s, "principals") is not L ps || ps.Count == 0 || ps.Count > MaxSessionPrincipals) return $"principals must be 1..{MaxSessionPrincipals} keys";

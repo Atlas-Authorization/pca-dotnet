@@ -13,7 +13,10 @@ namespace AtlasPca.Corpus.Tests;
 /// test-data/killPred.json.gz, written by tools/pca-audit/kotlin-mutate/killPred-oracle-gen.mjs (shared with the Kotlin suite).</summary>
 public class KillPredDifferentialTests
 {
-    static readonly Lazy<D> Data = new(() =>
+    static readonly string DataText = LoadText();
+    static D Data => (D)Pca.ParseBounded(DataText, int.MaxValue)!; // the oracle carries very deep vectors: no lenient depth cap (callers run on BigStack)
+
+    static string LoadText()
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
@@ -23,13 +26,13 @@ public class KillPredDifferentialTests
             if (!File.Exists(f)) continue;
             using var gz = new GZipStream(File.OpenRead(f), CompressionMode.Decompress);
             using var sr = new StreamReader(gz, new UTF8Encoding(false));
-            return (D)Pca.ParseBounded(sr.ReadToEnd(), int.MaxValue)!; // the oracle carries very deep vectors: no lenient depth cap (callers run on BigStack)
+            return sr.ReadToEnd();
         }
         throw new FileNotFoundException("test-data/killPred.json.gz");
-    });
+    }
 
-    static L Sec(string k) => (L)Data.Value[k]!;
-    static D? Ctx(object? i) => ((L)Data.Value["ctxs"]!)[int.Parse(((Num)i!).Raw)] as D;
+    static L Sec(D data, string k) => (L)data[k]!;
+    static D? Ctx(D data, object? i) => ((L)data["ctxs"]!)[int.Parse(((Num)i!).Raw)] as D;
     static Predicates.Tri Tri(object? s) => (string)s! switch { "T" => Predicates.Tri.True, "F" => Predicates.Tri.False, _ => Predicates.Tri.Unknown };
     static string Label(L e) { string c; try { c = Pca.Canonicalize(e[0]); if (c.Length > 160) c = c[..160]; } catch (Exception) { c = "<deep>"; } return c + " @ctx" + ((Num)e[1]!).Raw; }
     static void Check<T>(L e, T want, T got) { if (!EqualityComparer<T>.Default.Equals(want, got)) Assert.Fail($"{Label(e)}: want {want} got {got}"); }
@@ -37,9 +40,10 @@ public class KillPredDifferentialTests
     [Fact]
     public void ResolvePathMatchesTheReference() => BigStack.Run(() =>
     {
-        foreach (L e in Sec("rp"))
+        var data = Data;
+        foreach (L e in Sec(data, "rp"))
         {
-            var r = Predicates.ResolvePath(Ctx(e[1]), e[0]);
+            var r = Predicates.ResolvePath(Ctx(data, e[1]), e[0]);
             Check(e, (bool)e[2]!, r.Found);
             if (r.Found) Check(e, true, IntentJs.JsonEquals(e[3], r.Value)); // lenient canonical-text equality (the oracle carries unsafe integers)
             else if (r.Value != null) Assert.Fail(Label(e) + ": a miss carries a value");
@@ -49,12 +53,13 @@ public class KillPredDifferentialTests
     [Fact]
     public void ConditionsMatchTheReference() => BigStack.Run(() =>
     {
+        var data = Data;
         int n = 0;
-        foreach (L e in Sec("cond"))
+        foreach (L e in Sec(data, "cond"))
         {
-            var got = Predicates.EvaluateConditionTri(e[0], Ctx(e[1]));
+            var got = Predicates.EvaluateConditionTri(e[0], Ctx(data, e[1]));
             Check(e, Tri(e[2]), got);
-            Check(e, Tri(e[2]) == Predicates.Tri.True, Predicates.EvaluateCondition(e[0], Ctx(e[1])));
+            Check(e, Tri(e[2]) == Predicates.Tri.True, Predicates.EvaluateCondition(e[0], Ctx(data, e[1])));
             n++;
         }
         Assert.True(n > 100000);
@@ -63,13 +68,15 @@ public class KillPredDifferentialTests
     [Fact]
     public void PredicatesMatchTheReference() => BigStack.Run(() =>
     {
-        foreach (L e in Sec("pred")) Check(e, (bool)e[2]!, Predicates.PredicateMatches(e[0], Ctx(e[1])));
+        var data = Data;
+        foreach (L e in Sec(data, "pred")) Check(e, (bool)e[2]!, Predicates.PredicateMatches(e[0], Ctx(data, e[1])));
     });
 
     [Fact]
     public void PredicateListsMatchTheReference() => BigStack.Run(() =>
     {
-        foreach (L e in Sec("preds")) Check(e, (bool)e[2]!, Predicates.EvaluatePredicates(e[0], Ctx(e[1])));
+        var data = Data;
+        foreach (L e in Sec(data, "preds")) Check(e, (bool)e[2]!, Predicates.EvaluatePredicates(e[0], Ctx(data, e[1])));
     });
 
     [Fact]

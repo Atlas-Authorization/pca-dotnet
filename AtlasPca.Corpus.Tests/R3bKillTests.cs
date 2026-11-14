@@ -27,16 +27,19 @@ public class R3bKillTests
         return d;
     }
 
-    static readonly Lazy<D> First = new(() =>
+    static readonly string FirstText = LoadFirstText();
+    static D First => (D)((L)((D)Pca.ParseJson(FirstText)!)["vectors"]!)[0]!;
+
+    static string LoadFirstText()
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
         {
             var f = Path.Combine(d, "packages", "pca", "conformance", "vectors.json");
-            if (File.Exists(f)) return (D)((L)((D)Pca.ParseJson(File.ReadAllText(f))!)["vectors"]!)[0]!;
+            if (File.Exists(f)) return File.ReadAllText(f);
         }
         throw new InvalidOperationException("vectors.json not found");
-    });
+    }
 
     // ---------------------------------------------------------------- the failing-closed catches
 
@@ -116,12 +119,12 @@ public class R3bKillTests
     [Fact]
     public void ThrowingGrantIsAMalformedPcactnDenyWithEveryCheckFalse()
     {
-        var v0 = First.Value;
+        var v0 = First;
         var ctx = (D)v0["context"]!;
         long now = long.Parse(((Num)ctx["now"]!).Raw);
-        var good = Pca.VerifyPcactnCore(v0["pcactn"], (D)v0["grant"]!, now, (string)ctx["aud"]!);
+        var good = Pca.VerifyPcactnCore(v0["pcactn"], (D)v0["grant"]!, now, (string)ctx["aud"]!, planRoots: PlanRootPolicy.Skip);
         Assert.True(good.Allow, good.Reason);
-        var bad = Pca.VerifyPcactnCore(v0["pcactn"], Throwing((D)v0["grant"]!), now, (string)ctx["aud"]!, null, new IntentPolicy(true));
+        var bad = Pca.VerifyPcactnCore(v0["pcactn"], Throwing((D)v0["grant"]!), now, (string)ctx["aud"]!, null, new IntentPolicy(true), planRoots: PlanRootPolicy.Skip);
         Assert.False(bad.Allow);
         Assert.StartsWith("malformed PCActn: boom", bad.Reason);
         Assert.False(bad.Checks["intent"]);

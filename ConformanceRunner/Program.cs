@@ -84,7 +84,7 @@ foreach (var x in vs)
         if (v.TryGetValue("pcactn", out var upc) && upc is Dictionary<string, object?>)
         {
             var uctx = (Dictionary<string, object?>)v["context"]!;
-            var ug = Pca.VerifyPcactnCore(upc, (Dictionary<string, object?>)v["grant"]!, long.Parse(((Num)uctx["now"]!).Raw), (string)uctx["aud"]!);
+            var ug = Pca.VerifyPcactnCore(upc, (Dictionary<string, object?>)v["grant"]!, long.Parse(((Num)uctx["now"]!).Raw), (string)uctx["aud"]!, planRoots: PlanRootPolicy.Skip);
             if (ug.Allow || !ug.Reason.Contains(Pq.UnsupportedSuite)) Bad($"{name}: suite {sus} is not implemented, so it must fail with unsupported_suite ({ug.Reason})");
         }
         continue;
@@ -101,8 +101,8 @@ foreach (var x in vs)
     // Intent Layer v2: `schema-*` / `session-*` / `acc-*` / `layers-*` vectors carry the verifier state in context.intent_v2.
     var intentV2 = ctx.ContainsKey("intent_v2") ? IntentV2Context.FromJson(ctx["intent_v2"]) : null;
     Verdict got = v.ContainsKey("pcactn_json")
-        ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed, intentPolicy, intentV2)
-        : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed, intentPolicy, intentV2);
+        ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed, intentPolicy, intentV2, planRoots: PlanRootPolicy.Skip)
+        : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed, intentPolicy, intentV2, planRoots: PlanRootPolicy.Skip);
     // Intent Layer v2: a vector whose artifacts need a suite this SDK lacks must FAIL closed with unsupported_suite
     var missingSuite = IntentPrimitives.MissingRequiredSuite(v.GetValueOrDefault("requires_suite"));
     if (missingSuite != null)
@@ -269,7 +269,7 @@ foreach (var x in (List<object?>)prim["malformed"]!)
             "chain" => Pca.VerifyChain((List<object?>)((Dictionary<string, object?>)m["input"]!)["chain"]!, ((Dictionary<string, object?>)m["input"]!)["expected_root_issuer"], true).Ok,
             "threshold_share" => Pca.VerifyThresholdShare(m["input"]),
             "pcactn_json" => Pca.VerifyRaw((string)((Dictionary<string, object?>)m["input"]!)["text"]!, (Dictionary<string, object?>)((Dictionary<string, object?>)m["input"]!)["grant"]!,
-                long.Parse(((Num)((Dictionary<string, object?>)m["input"]!)["now"]!).Raw, System.Globalization.CultureInfo.InvariantCulture), (string)((Dictionary<string, object?>)m["input"]!)["aud"]!).Allow,
+                long.Parse(((Num)((Dictionary<string, object?>)m["input"]!)["now"]!).Raw, System.Globalization.CultureInfo.InvariantCulture), (string)((Dictionary<string, object?>)m["input"]!)["aud"]!, planRoots: PlanRootPolicy.Skip).Allow,
             _ => true,
         };
         if (accepted) Bad($"malformed {mname}: accepted");

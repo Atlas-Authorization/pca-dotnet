@@ -21,10 +21,10 @@ public class IntentPrimitivesTests
         throw new InvalidOperationException("conformance dir not found");
     }
 
-    static readonly Lazy<D> Prim = new(() =>
-        (D)((D)Pca.ParseJson(File.ReadAllText(Path.Combine(ConfDir(), "vectors.json")))!)["primitives"]!);
+    // parsed per access (one access per Entries call): a mutant in the parser must not poison a process-wide cache
+    static D Prim => (D)((D)Pca.ParseJson(File.ReadAllText(Path.Combine(ConfDir(), "vectors.json")))!)["primitives"]!;
 
-    static IEnumerable<D> Entries(string kind) => ((L)Prim.Value[kind]!).Cast<D>();
+    static IEnumerable<D> Entries(string kind) => ((L)Prim[kind]!).Cast<D>();
     static object? InputOf(D e) => IntentJs.Get(e, "input_json") is string raw ? Pca.ParseJson(raw) : e["input"];
     static D Got(string kind, D e) => IntentPrimitives.Result(kind, InputOf(e))!;
     static D Copy(object? o) => (D)IntentJs.Normalize(o)!;

@@ -10,7 +10,7 @@ namespace AtlasPca;
 public static class IntentPrimitives
 {
     /// <summary>The primitive kinds, in runner order.</summary>
-    public static readonly string[] Kinds = { "intent_schema", "intent_revocation", "intent_world", "intent_provenance", "intent_classifier", "intent_wb_active", "intent_map_commit", "intent_map", "intent_read_purpose" };
+    public static string[] Kinds => new string[] { "intent_schema", "intent_revocation", "intent_world", "intent_provenance", "intent_classifier", "intent_wb_active", "intent_map_commit", "intent_map", "intent_read_purpose" };
 
     /// <summary>The verdict of one primitive in the shape of its <c>expect</c>; null for an unknown kind.</summary>
     public static D? Result(string kind, object? input)
