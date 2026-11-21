@@ -7,10 +7,10 @@ namespace AtlasPca;
 
 internal static class IntentArtifacts
 {
-    internal static readonly Regex IntentNameRe = new(@"^[a-z][a-z0-9_]{0,63}\z", RegexOptions.CultureInvariant);
-    internal static readonly Regex DataClassRe = new(@"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*\z", RegexOptions.CultureInvariant);
-    static readonly Regex ParamSegmentRe = new(@"^[A-Za-z0-9_-]{1,64}\z", RegexOptions.CultureInvariant);
-    static readonly HashSet<string> ForbiddenSegments = new() { "__proto__", "constructor", "prototype" };
+    internal static Regex IntentNameRe => Rx.Get(@"^[a-z][a-z0-9_]{0,63}\z", RegexOptions.CultureInvariant);
+    internal static Regex DataClassRe => Rx.Get(@"^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*\z", RegexOptions.CultureInvariant);
+    static Regex ParamSegmentRe => Rx.Get(@"^[A-Za-z0-9_-]{1,64}\z", RegexOptions.CultureInvariant);
+    static HashSet<string> ForbiddenSegments => new() { "__proto__", "constructor", "prototype" };
 
     internal static bool IsPathSegment(string s) => ParamSegmentRe.IsMatch(s) && !ForbiddenSegments.Contains(s);
     internal static bool IsName(object? v) => v is string s && IntentNameRe.IsMatch(s);
@@ -30,13 +30,13 @@ internal static class IntentArtifacts
 
     internal static string? ClosedMembers(Dictionary<string, object?> o, string[] required, string[] optional, string where)
     {
-        foreach (var k in o.Keys) if (!required.Contains(k) && !optional.Contains(k)) return $"unknown member '{where}.{k}'";
+        foreach (var k in IntentJs.JsKeys(o.Keys)) if (!required.Contains(k) && !optional.Contains(k)) return $"unknown member '{where}.{k}'";
         foreach (var k in required) if (!o.ContainsKey(k)) return $"missing member '{where}.{k}'";
         return null;
     }
 
     /// <summary>The optional suite members every W-B artifact may carry (<c>alg</c> and <c>pq_pk</c> are signed, <c>pq_sig</c> is not).</summary>
-    internal static readonly string[] SuiteMembers = { "alg", "pq_pk", "pq_sig" };
+    internal static string[] SuiteMembers => new string[] { "alg", "pq_pk", "pq_sig" };
 
     /// <summary>A pin entry's optional <c>pq_pk</c>: absent, or a non-empty string.</summary>
     internal static bool PinPqOk(object? pin) => !IntentJs.Own(pin, "pq_pk") || IntentJs.Get(pin, "pq_pk") is string { Length: > 0 };

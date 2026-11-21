@@ -22,9 +22,9 @@ public static class Predicates
     /// <summary>Three-valued condition truth.</summary>
     public enum Tri { True, False, Unknown }
 
-    static readonly HashSet<string> Roots = new() { "action", "subject", "env" };
-    static readonly HashSet<string> Forbidden = new() { "__proto__", "constructor", "prototype" };
-    static readonly Regex Index = new(@"^(0|[1-9][0-9]*)\z", RegexOptions.CultureInvariant);
+    static HashSet<string> Roots => new() { "action", "subject", "env" };
+    static HashSet<string> Forbidden => new() { "__proto__", "constructor", "prototype" };
+    static Regex Index => Rx.Get(@"^(0|[1-9][0-9]*)\z", RegexOptions.CultureInvariant);
 
     static bool IsJsObject(object? x) => x is Dictionary<string, object?> || x is List<object?>;
 
@@ -38,13 +38,15 @@ public static class Predicates
         var segs = ps.Split('.');
         if (!Roots.Contains(segs[0])) return default;
         if (ctx == null || !ctx.TryGetValue(segs[0], out var cur)) return default;
+        var forbidden = Forbidden;
+        var indexRe = Index;
         for (int i = 1; i < segs.Length; i++)
         {
             var s = segs[i];
-            if (Forbidden.Contains(s) || !IsJsObject(cur)) return default;
+            if (forbidden.Contains(s) || !IsJsObject(cur)) return default;
             if (cur is List<object?> l)
             {
-                if (!Index.IsMatch(s)) return default;
+                if (!indexRe.IsMatch(s)) return default;
                 double idx = double.Parse(s, System.Globalization.CultureInfo.InvariantCulture);
                 if (idx >= l.Count) return default;
                 cur = l[(int)idx];
@@ -135,10 +137,12 @@ public static class Predicates
         return null;
     }
 
-    static List<string> NeighboursOf(Dictionary<string, object?> adj, string node)
+    static List<string> NeighboursOf(Dictionary<string, object?> adj, string node) => NeighboursOf(adj, node, Forbidden);
+
+    static List<string> NeighboursOf(Dictionary<string, object?> adj, string node, HashSet<string> forbidden)
     {
         var output = new List<string>();
-        if (Forbidden.Contains(node) || !adj.TryGetValue(node, out var raw)) return output;
+        if (forbidden.Contains(node) || !adj.TryGetValue(node, out var raw)) return output;
         if (raw is string s) output.Add(s);
         else if (raw is List<object?> l) foreach (var x in l) if (x is string xs) output.Add(xs);
         return output;
@@ -150,11 +154,12 @@ public static class Predicates
         var queue = new Queue<string>();
         queue.Enqueue(start);
         int visited = 0;
+        var forbidden = Forbidden;
         while (queue.Count > 0 && visited < MaxMemberClosureNodes)
         {
             visited++;
             var node = queue.Dequeue();
-            foreach (var n in NeighboursOf(adj, node)) if (seen.Add(n)) queue.Enqueue(n);
+            foreach (var n in NeighboursOf(adj, node, forbidden)) if (seen.Add(n)) queue.Enqueue(n);
         }
         return seen;
     }
@@ -366,4 +371,72 @@ public static class Predicates
     /// <summary>An action is allowed iff it matches AT LEAST ONE predicate. Default-deny: an empty or non-list set allows nothing.</summary>
     public static bool EvaluatePredicates(object? predicates, Dictionary<string, object?>? ctx) =>
         SafeRegex.WithBudget(() => predicates is List<object?> l && l.Count > 0 && l.Any(p => PredicateMatches(p, ctx)));
+
+    // ---- B6 (0.5): name the limit that was not met (TypeScript firstUnmetLimit / describeCondition / showValue) ----
+
+    static Dictionary<string, string> OpText => new()
+    {
+        ["eq"] = "==", ["ne"] = "!=", ["lt"] = "<", ["lte"] = "<=", ["gt"] = ">", ["gte"] = ">=", ["in"] = "in", ["nin"] = "not in",
+        ["prefix"] = "starts with", ["like"] = "like", ["matches"] = "matches", ["is_a"] = "is a", ["member_of"] = "member of",
+    };
+    const int MaxShownString = 64, MaxShownItems = 8;
+
+    /// <summary>A scalar operand in a denial reason: only safe integers, booleans, null and plain short strings are spelled out.</summary>
+    internal static string ShowValue(object? v, int depth = 0)
+    {
+        if (v == null) return "null";
+        if (v is bool b) return b ? "true" : "false";
+        if (IntentJs.IsNumber(v)) return IntentJs.IsSafeInteger(v) ? IntentJs.Lng(v).ToString(System.Globalization.CultureInfo.InvariantCulture) : "<number>";
+        if (v is string s)
+            return s.Length <= MaxShownString && !s.Any(ch => ch < ' ' || ch == '"' || ch == '\\' || char.IsSurrogate(ch)) ? "\"" + s + "\"" : "\"...\"";
+        if (v is List<object?> l && depth == 0) return l.Count <= MaxShownItems ? "[" + string.Join(", ", l.Select(x => ShowValue(x, 1))) + "]" : "[...]";
+        return "<value>";
+    }
+
+    static bool IsGroup(Dictionary<string, object?> c) => c.ContainsKey("all_of") || c.ContainsKey("any_of") || c.ContainsKey("not");
+
+    /// <summary>The condition as the limit a reader recognises: <c>amount &lt;= 500</c>, <c>currency in ["usd", "eur"]</c>.</summary>
+    internal static string DescribeCondition(object? cond, int depth = 0)
+    {
+        if (cond is List<object?>) return "<field> <condition>"; // the reference treats an array as a leaf with no field or op
+        if (cond is not Dictionary<string, object?> c) return "<condition>";
+        if (IsGroup(c))
+        {
+            if (depth >= 2) return "(...)";
+            string Kids(object? xs) => string.Join("; ", ((List<object?>)xs!).Take(MaxShownItems).Select(x => DescribeCondition(x, depth + 1)));
+            if (c.TryGetValue("all_of", out var all) && all is List<object?>) return $"all of ({Kids(all)})";
+            if (c.TryGetValue("any_of", out var any) && any is List<object?>) return $"any of ({Kids(any)})";
+            if (c.TryGetValue("not", out var not)) return $"not ({DescribeCondition(not, depth + 1)})";
+            return "<condition>";
+        }
+        var f = IntentJs.Get(c, "field") is string fs ? fs : "<field>";
+        var name = f.StartsWith("action.params.", StringComparison.Ordinal) ? f.Substring("action.params.".Length) : f;
+        var op = IntentJs.Get(c, "op") as string;
+        if (op == "exists") return IntentJs.Get(c, "value") is false ? name + " absent" : name + " present";
+        if (op == null || !OpText.TryGetValue(op, out var text)) return name + " <condition>";
+        return $"{name} {text} " + (c.TryGetValue("ref", out var r) ? (r is string rs ? rs : "<ref>") : ShowValue(IntentJs.Get(c, "value")));
+    }
+
+    static object? NarrowestUnmet(object? c, Dictionary<string, object?>? ctx, int depth = 0)
+    {
+        if (depth < 4 && c is Dictionary<string, object?> m && IsGroup(m) && m.TryGetValue("all_of", out var all) && all is List<object?> xs)
+            foreach (var x in xs) if (!EvaluateCondition(x, ctx)) return NarrowestUnmet(x, ctx, depth + 1);
+        return c;
+    }
+
+    /// <summary>When a predicate's verb and resource are in scope but a <c>where</c> limit is not met, the narrowest unmet limit
+    /// described; null when no predicate is in scope (the plain "no predicate permits" wording stays).</summary>
+    public static string? FirstUnmetLimit(object? predicates, Dictionary<string, object?>? ctx) => SafeRegex.WithBudget<string?>(() =>
+    {
+        var a = ctx != null && ctx.TryGetValue("action", out var av) ? av as Dictionary<string, object?> : null;
+        if (a == null || IntentJs.Get(a, "verb") is not string verb || IntentJs.Get(a, "resource") is not string resource) return null;
+        if (predicates is not List<object?> l) return null;
+        foreach (var p in l)
+        {
+            if (p is not Dictionary<string, object?> pm || !VerbMatches(IntentJs.Get(pm, "verb"), verb) || !ResourceMatches(pm, resource)) continue;
+            if (IntentJs.Get(pm, "where") is not List<object?> wl) continue;
+            foreach (var c in wl) if (!EvaluateCondition(c, ctx)) return DescribeCondition(NarrowestUnmet(c, ctx));
+        }
+        return null;
+    });
 }

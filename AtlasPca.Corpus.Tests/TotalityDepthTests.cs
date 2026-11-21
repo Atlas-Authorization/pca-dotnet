@@ -28,7 +28,7 @@ public class TotalityDepthTests
     [Fact]
     public void VerifyRaw_NullText_IsAWireDeny()
     {
-        var v = Pca.VerifyRaw(null!, new D(), 0, "a");
+        var v = Pca.VerifyRaw(null!, new D(), 0, "a", planRoots: PlanRootPolicy.Skip);
         Assert.False(v.Allow);
         Assert.False(v.Checks["wire"]);
     }
@@ -36,7 +36,7 @@ public class TotalityDepthTests
     [Fact]
     public void VerifyRaw_NullGrantAndAudience_IsADeny()
     {
-        var v = Pca.VerifyRaw("{}", null!, 0, null!);
+        var v = Pca.VerifyRaw("{}", null!, 0, null!, planRoots: PlanRootPolicy.Skip);
         Assert.False(v.Allow);
     }
 
@@ -50,7 +50,7 @@ public class TotalityDepthTests
         Assert.False(Pca.VerifyChain(new L { null }, null, false).Ok);
         Assert.False(Pca.VerifyThresholdShare((object?)null));
         Assert.False(Pca.VerifyThresholdShare((D)null!));
-        Assert.False(Pca.VerifyPcactnCore(null, null!, 0, null!).Allow);
+        Assert.False(Pca.VerifyPcactnCore(null, null!, 0, null!, planRoots: PlanRootPolicy.Skip).Allow);
         Assert.False(Pca.VerifyInclusion(null!, null, null));
         Assert.False(Pca.VerifySuiteSig(null, null, null, null!, null, null));
         Assert.False(Pca.VerifySuiteSig("ml-dsa-65", null, "x", null!, "y", null));
@@ -116,7 +116,7 @@ public class TotalityDepthTests
             Assert.Throws<StrictJsonException>(() => Pca.ParseStrictEnvelope("{\"pcactn\":" + s + "}"));
             Assert.Throws<StrictJsonException>(() => Pca.ParseJson(s));
         }
-        var v = Pca.VerifyRaw("{\"x\":" + new string('[', 100_000) + "}", new D(), 0, "a");
+        var v = Pca.VerifyRaw("{\"x\":" + new string('[', 100_000) + "}", new D(), 0, "a", planRoots: PlanRootPolicy.Skip);
         Assert.False(v.Allow);
     });
 
@@ -154,7 +154,7 @@ public class TotalityDepthTests
         foreach (var n in new[] { 33, 100_000 })
         {
             var p = new D { ["risk_claim"] = new D { ["inputs"] = new D { ["x"] = NestArrays(n, null) } } };
-            Assert.False(Pca.VerifyPcactnCore(p, new D { ["deep"] = NestArrays(n, null) }, 0, "a").Allow);
+            Assert.False(Pca.VerifyPcactnCore(p, new D { ["deep"] = NestArrays(n, null) }, 0, "a", planRoots: PlanRootPolicy.Skip).Allow);
             Assert.NotNull(Pca.ValidateWire(p));
         }
     });

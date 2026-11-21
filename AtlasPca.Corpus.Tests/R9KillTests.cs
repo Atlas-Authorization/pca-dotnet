@@ -174,9 +174,8 @@ public class R9KillTests
 
     // ---- LessNative.Load: a library only counts when it reports exactly the less-252-45 sizes and exports verify ---------------
 
-    /// <summary>GATED (run once on the box, see tools/pca-audit/native-mutation-equivalents.json: LessNative.cs:53): it needs the
-    /// directory of fake libraries built by sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data/fake-less/build.sh, exported as
-    /// ATLAS_PCA_FAKELESS_DIR; without it the test returns immediately (CI has no fake libraries).</summary>
+    /// <summary>Needs the directory of fake libraries built by test-data/fake-less/build.sh, exported as ATLAS_PCA_FAKELESS_DIR
+    /// (CI and the mutation run build them on Linux / macOS; without it, i.e. on Windows, the test returns immediately).</summary>
     [Fact]
     public void LoadRefusesALibraryWithOtherSizesOrNoVerifyExport()
     {

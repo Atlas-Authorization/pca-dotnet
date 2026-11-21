@@ -12,7 +12,7 @@ namespace AtlasPca;
 public static class IntentRevocation
 {
     public const string RevepochDomain = "atlas-pca/revepoch/v1\0";
-    static readonly byte[] RevsetPrefix = Encoding.UTF8.GetBytes("pca-revset/v1\0");
+    static byte[] RevsetPrefix => Encoding.UTF8.GetBytes("pca-revset/v1\0");
 
     public static string SessionRevocationId(string session) => "pca-intent:session:" + session;
     public static string MapRevocationId(string mapDigest) => "pca-intent:map:" + mapDigest;
@@ -35,7 +35,7 @@ public static class IntentRevocation
     static string BindRoot(object? size, string treeRoot) =>
         Pca.B64u(Pca.Sha256Of(RevsetPrefix, IntentJs.CanonBytes(new D { ["size"] = size, ["tree"] = treeRoot })));
 
-    static readonly string EmptyTree = Pca.B64u(Pca.Sha256Of(Array.Empty<byte>()));
+    static string EmptyTree => Pca.B64u(Pca.Sha256Of(Array.Empty<byte>())); // per access (see Pq.Suites)
 
     /// <summary><c>revset_root(L)</c>: <c>base64url(SHA-256("pca-revset/v1\0" || canonical({size: |L|, tree})))</c> over the RFC 6962
     /// Merkle root of <c>L</c> in order (leaf <c>SHA-256(0x00 || canonical(id))</c>, node <c>SHA-256(0x01 || l || r)</c>),
@@ -137,6 +137,7 @@ public static class IntentRevocation
                 if (IntentJs.NumOf(ep["epoch"])!.Value < IntentJs.NumOf(IntentJs.Get(lep, "epoch"))!.Value) return "revocation epoch rollback (older than the last accepted)";
                 foreach (var id in ((L)IntentJs.Get(last, "revoked")!).Cast<string>())
                     if (!cur.Contains(id)) return $"the epoch drops '{id}', revoked in the last accepted epoch (not append-only)";
+                // defence in depth (intent-revocation.ts:127): the drop check already catches it, as epoch == set size makes an equal-size superset the same set and root
                 if (IntentJs.NumOf(ep["epoch"]) == IntentJs.NumOf(IntentJs.Get(lep, "epoch")) && ep["root"] as string != IntentJs.Get(lep, "root") as string)
                     return "two different revocation sets under one epoch number (equivocation)";
             }
@@ -154,7 +155,7 @@ public static class IntentRevocation
     }
 
     /// <summary>The parameters of <c>primitives.intent_revocation</c>; every other input member belongs to the (closed) evidence.</summary>
-    static readonly string[] PrimitiveParams = { "session", "scope", "authority", "ids", "now", "max_age_ms", "last" };
+    static string[] PrimitiveParams => new string[] { "session", "scope", "authority", "ids", "now", "max_age_ms", "last" };
 
     /// <summary>The <c>primitives.intent_revocation</c> entry point: <c>{epoch, revoked, session, authority, ids, now, max_age_ms,
     /// last?}</c> with the scope <c>"pca-intent-session:" + session</c>.</summary>

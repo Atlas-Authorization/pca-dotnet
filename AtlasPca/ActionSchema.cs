@@ -17,23 +17,39 @@ public static class ActionSchema
     public const int MaxSchemaValues = 256;
     public const int DefaultMaxLen = 1024;
     public const int DefaultMaxItems = 64;
-    static readonly Regex ParamPathRe = new(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
-    internal static readonly Regex UnitIdRe = new(@"^[a-z0-9_]+(?:\.[a-z0-9_]+)*\z", RegexOptions.CultureInvariant);
-    static readonly Regex DateRe = new(@"^([0-9]{4})-([0-9]{2})-([0-9]{2})\z", RegexOptions.CultureInvariant);
-    internal static readonly HashSet<string> ReservedNames = new() { "__proto__", "constructor", "prototype" };
-    static readonly string[] Sensitivities = { "free", "material", "critical" };
-    static readonly string[] SchemaReversibility = { "reversible", "rate_limited", "irreversible" };
-    static readonly string[] ParamTypes = { "string", "integer", "boolean", "date", "set", "array" };
-    static readonly string[] DocKeys = { "v", "kind", "site", "aud", "version", "units", "state", "verbs", "sig" };
-    static readonly string[] VerbKeys = { "verb", "kind", "params", "reversibility", "reversibility_by", "mcp", "openapi", "harm", "world", "effects", "returns", "description" };
-    static readonly string[] ParamKeys = { "type", "semantic", "sensitivity", "required", "values", "min", "max", "unit", "max_len", "items",
+    static Regex ParamPathRe => Rx.Get(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
+    internal static Regex UnitIdRe => Rx.Get(@"^[a-z0-9_]+(?:\.[a-z0-9_]+)*\z", RegexOptions.CultureInvariant);
+    static Regex DateRe => Rx.Get(@"^([0-9]{4})-([0-9]{2})-([0-9]{2})\z", RegexOptions.CultureInvariant);
+    internal static HashSet<string> ReservedNames => new() { "__proto__", "constructor", "prototype" };
+    static string[] Sensitivities => new string[] { "free", "material", "critical" };
+    static string[] SchemaReversibility => new string[] { "reversible", "rate_limited", "irreversible" };
+    static string[] ParamTypes => new string[] { "string", "integer", "boolean", "date", "set", "array" };
+    static string[] DocKeys => new string[] { "v", "kind", "site", "aud", "version", "units", "state", "verbs", "sig" };
+    static string[] VerbKeys => new string[] { "verb", "kind", "params", "reversibility", "reversibility_by", "mcp", "openapi", "harm", "world", "effects", "returns", "description" };
+    static string[] ParamKeys => new string[]
+    { "type", "semantic", "sensitivity", "required", "values", "min", "max", "unit", "max_len", "items",
         "min_items", "max_items", "default", "principal_neutral_default", "accumulates_into", "issued_by_site", "description" };
-    static readonly string[] SigKeys = { "alg", "kid", "value", "pq_value" };
+    static string[] SigKeys => new string[] { "alg", "kid", "value", "pq_value" };
+
+    // ---- v2 (action kit): vocabularies, keys and the dotted parameter path
+    static Regex ParamPathReV2 => Rx.Get(@"^action\.params\.[A-Za-z0-9_]{1,64}(?:\.[A-Za-z0-9_]{1,64}){0,2}\z", RegexOptions.CultureInvariant);
+    static Regex TraitIdRe => Rx.Get(@"^[a-z][a-z0-9_]{0,31}\.[a-z][a-z0-9_]{0,63}\z", RegexOptions.CultureInvariant);
+    static Regex TaintCtxRe => Rx.Get(@"^session_taint_max:[a-z_]{1,16}\z", RegexOptions.CultureInvariant);
+    static string[] ParamTypesV2 => new string[] { "string", "integer", "boolean", "date", "set", "array", "datetime", "duration", "object_ref" };
+    internal static string[] V2Effects => new string[] { "read", "create", "update", "delete", "send", "pay", "exec", "privilege", "export", "publish", "provision", "sign" };
+    internal static string[] V2Caveats => new string[] { "amount_cap", "count_cap", "window", "resource_scope", "recipient_scope", "approval_ref", "short_expiry", "rate_cap" };
+    internal static string[] V2Prules => new string[] { "array_bounded", "export_bounded", "id_not_wildcard", "money_amount_bounded", "money_has_currency", "pay_has_idempotency", "recipient_param_declared", "secret_not_logged" };
+    internal static string[] V2Context => new string[] { "approval_ref", "dry_run_first", "fresh_revocation", "idempotency", "revocable", "sandbox_attested" };
+    static string[] V2Tags => new string[] { "pii", "phi", "pci", "secret", "credential", "free_text_outbound", "code", "path", "sql" };
+    static string[] V2Provenance => new string[] { "first_party", "tool", "agent" };
+    static string[] DocKeysV2 => DocKeys.Concat(new[] { "traits_digest", "trait_defs", "pack" }).ToArray();
+    static string[] VerbKeysV2 => VerbKeys.Concat(new[] { "traits", "def", "floors", "confirmation" }).ToArray();
+    static string[] ParamKeysV2 => ParamKeys.Concat(new[] { "role", "format", "tags", "provenance_min" }).ToArray();
 
     /// <summary>A conformance verdict: <c>Ok</c>, else the violation <c>Code</c> (and <c>Path</c> for a parameter).</summary>
     public sealed record Conform(bool Ok, string? Code, string? Path, string? Reason)
     {
-        internal static readonly Conform Pass = new(true, null, null, null);
+        internal static Conform Pass => new(true, null, null, null);
     }
 
     internal static bool IsStr(object? v, int max = 256) => v is string s && s.Length > 0 && !Pca.HasLoneSurrogate(s) && IntentJs.U8Len(s) <= max;
@@ -48,14 +64,15 @@ public static class ActionSchema
         public int GetHashCode(object? o) => o switch { string s => s.GetHashCode(), bool b => b ? 1 : 2, _ => IntentJs.NumOf(o)?.GetHashCode() ?? 0 };
     }
 
-    static string? ParamDeclError(string path, object? dO, object? units)
+    static string? ParamDeclError(string path, object? dO, object? units, bool v2 = false)
     {
-        if (!ParamPathRe.IsMatch(path)) return $"parameter path '{path}' is not action.params.<name>";
-        if (ReservedNames.Contains(path.Substring("action.params.".Length))) return $"parameter name '{path}' is reserved (__proto__ / constructor / prototype)";
+        if (!(v2 ? ParamPathReV2 : ParamPathRe).IsMatch(path)) return $"parameter path '{path}' is not action.params.<name>";
+        if (path.Split('.').Any(ReservedNames.Contains)) return $"parameter name '{path}' is reserved (__proto__ / constructor / prototype)";
         if (dO is not D d) return path + ": declaration must be an object";
-        foreach (var k in d.Keys) if (!ParamKeys.Contains(k)) return $"{path}: unknown member '{k}'";
+        var paramKeys = v2 ? ParamKeysV2 : ParamKeys;
+        foreach (var k in d.Keys) if (!paramKeys.Contains(k)) return $"{path}: unknown member '{k}'";
         var type = IntentJs.Get(d, "type");
-        if (!In(ParamTypes, type)) return path + ": unknown type";
+        if (!In(v2 ? ParamTypesV2 : ParamTypes, type)) return path + ": unknown type";
         if (!IsStr(IntentJs.Get(d, "semantic"), 128)) return path + ": semantic must be a non-empty string";
         if (!In(Sensitivities, IntentJs.Get(d, "sensitivity"))) return path + ": unknown sensitivity";
         if (d.ContainsKey("required") && d["required"] is not bool) return path + ": required must be a boolean";
@@ -68,7 +85,7 @@ public static class ActionSchema
         if (type as string == "set" && !d.ContainsKey("values")) return path + ": a set needs values";
         bool intItems = type as string == "array" && IntentJs.Get(d, "items") as string == "integer";
         foreach (var k in new[] { "min", "max" })
-            if (d.ContainsKey(k) && (!IntentJs.IsInt(d[k]) || (type as string != "integer" && !intItems))) return $"{path}: {k} must be a safe integer on an integer parameter";
+            if (d.ContainsKey(k) && (!IntentJs.IsInt(d[k]) || (type as string != "integer" && !(v2 && type as string == "duration") && !intItems))) return $"{path}: {k} must be a safe integer on an integer parameter";
         if (IntentJs.IsInt(IntentJs.Get(d, "min")) && IntentJs.IsInt(IntentJs.Get(d, "max")) && IntentJs.NumOf(d["min"]) > IntentJs.NumOf(d["max"])) return path + ": min > max";
         if (d.ContainsKey("unit") && (type as string != "integer" || d["unit"] is not string u || units is not D ud || !ud.ContainsKey(u)))
             return path + ": unit must name a declared unit of an integer parameter";
@@ -83,21 +100,67 @@ public static class ActionSchema
         {
             if (type as string != "integer") return path + ": accumulates_into applies to integer parameters only";
             if (d["accumulates_into"] is not L ai || ai.Count == 0 || ai.Count > 8) return path + ": accumulates_into must be 1..8 unit ids";
-            if (ai.Any(x => x is not string us || us.Length > 64 || !UnitIdRe.IsMatch(us))) return path + ": accumulates_into entries must be unit ids";
+            var unitIdRe = UnitIdRe;
+            if (ai.Any(x => x is not string us || us.Length > 64 || !unitIdRe.IsMatch(us))) return path + ": accumulates_into entries must be unit ids";
             if (!Distinct(ai)) return path + ": accumulates_into must be distinct";
         }
         if (d.ContainsKey("default") && d["default"] == null) return path + ": default must not be null (absent = no default)";
         if (d.ContainsKey("issued_by_site") && d["issued_by_site"] is not bool) return path + ": issued_by_site must be a boolean";
         if (d.ContainsKey("description") && !IsStr(d["description"], 1024)) return path + ": description must be a string";
+        if (v2)
+        {
+            var v2Tags = V2Tags;
+            if (d.ContainsKey("role") && !IsStr(d["role"], 128)) return path + ": role must be a non-empty string";
+            if (d.ContainsKey("format") && (d["format"] is not string fs || FormatCheck(fs) == null || (type as string != "string" && type as string != "object_ref"))) return path + ": format must be a known format on a string parameter";
+            if (d.ContainsKey("tags") && (d["tags"] is not L tg || tg.Count > v2Tags.Length || !Distinct(tg) || tg.Any(t => !In(v2Tags, t)))) return path + ": tags must be distinct known tags";
+            if (d.ContainsKey("provenance_min") && !In(V2Provenance, d["provenance_min"])) return path + ": unknown provenance_min";
+        }
         return null;
     }
 
-    static bool ExactKeys(object? o, params string[] keys) => o is D m && m.Count == keys.Length && keys.All(m.ContainsKey);
+    /// <summary>Null if <paramref name="f"/> is a well-formed materialized profile (shape only; the semantic check is rule 22).</summary>
+    internal static string? SchemaFloorsError(object? fO)
+    {
+        if (fO is not D f) return "floors must be an object";
+        foreach (var k in f.Keys) if (k is not ("risk" or "rev" or "blast_ppm" or "esc" or "caveats" or "context" or "prules")) return $"floors: unknown member '{k}'";
+        static bool Rng(object? x, long lo, long hi) => IntentJs.IsInt(x) && IntentJs.NumOf(x)!.Value >= lo && IntentJs.NumOf(x)!.Value <= hi;
+        if (!Rng(IntentJs.Get(f, "risk"), 0, 3) || !Rng(IntentJs.Get(f, "esc"), 0, 3)) return "floors.risk and floors.esc must be integers in 0..3";
+        if (!In(SchemaReversibility, IntentJs.Get(f, "rev"))) return "floors.rev is not a reversibility class";
+        if (!Rng(IntentJs.Get(f, "blast_ppm"), 0, 1_000_000)) return "floors.blast_ppm must be an integer in 0..1000000";
+        var v2Caveats = V2Caveats; var v2Context = V2Context; var v2Prules = V2Prules; var taintCtxRe = TaintCtxRe;
+        foreach (var (name, ok) in new (string, Func<string, bool>)[] { ("caveats", x => v2Caveats.Contains(x)), ("context", x => v2Context.Contains(x) || taintCtxRe.IsMatch(x)), ("prules", x => v2Prules.Contains(x)) })
+        {
+            if (IntentJs.Get(f, name) is not L a || a.Count > 64 || a.Any(x => x is not string xs || !ok(xs))) return $"floors.{name} must be an array of known entries";
+            for (int i = 1; i < a.Count; i++) if (string.CompareOrdinal((string)a[i - 1]!, (string)a[i]!) >= 0) return $"floors.{name} must be sorted and distinct";
+        }
+        return null;
+    }
 
-    static string? VerbDeclError(object? vO, object? units)
+    /// <summary>Null if <paramref name="co"/> is a well-formed v2 verb <c>confirmation</c> (shape only; whether it counts is rule 22).</summary>
+    internal static string? ConfirmationShapeError(object? co)
+    {
+        if (co is not D c) return "confirmation must be an object";
+        foreach (var k in c.Keys) if (k is not ("def_digest" or "traits_digest" or "facts_digest" or "final_traits" or "dismissed" or "reviewer_kid" or "ts" or "sig")) return $"confirmation: unknown member '{k}'";
+        if (Pca.B64uDecode(IntentJs.Get(c, "def_digest"), 32) == null || Pca.B64uDecode(IntentJs.Get(c, "traits_digest"), 32) == null || Pca.B64uDecode(IntentJs.Get(c, "facts_digest"), 32) == null) return "confirmation: def_digest, traits_digest and facts_digest must be canonical base64url SHA-256 digests";
+        if (Pca.B64uDecode(IntentJs.Get(c, "sig"), 64) == null) return "confirmation: sig must be a canonical base64url 64-byte signature";
+        var traitIdRe = TraitIdRe;
+        if (IntentJs.Get(c, "final_traits") is not L ft || ft.Count > 64 || ft.Any(x => x is not string s || !traitIdRe.IsMatch(s))) return "confirmation: final_traits must be trait ids";
+        for (int i = 1; i < ft.Count; i++) if (string.CompareOrdinal((string)ft[i - 1]!, (string)ft[i]!) >= 0) return "confirmation: final_traits must be sorted and distinct";
+        if (IntentJs.Get(c, "dismissed") is not L dm || dm.Count > 64) return "confirmation: dismissed must be an array";
+        foreach (var d in dm)
+            if (d is not D dd || dd.Keys.Any(k => k != "trait" && k != "reason") || IntentJs.Get(dd, "trait") is not string t || !traitIdRe.IsMatch(t) || !IsStr(IntentJs.Get(dd, "reason"), 256)) return "confirmation: dismissed entries must be {trait, reason}";
+        if (!IsStr(IntentJs.Get(c, "reviewer_kid"), 128)) return "confirmation: reviewer_kid must be a non-empty string";
+        if (!IntentJs.IsNonNeg(IntentJs.Get(c, "ts"))) return "confirmation: ts must be a non-negative safe integer";
+        return null;
+    }
+
+    internal static bool ExactKeys(object? o, params string[] keys) => o is D m && m.Count == keys.Length && keys.All(m.ContainsKey);
+
+    static string? VerbDeclError(object? vO, object? units, bool v2 = false)
     {
         if (vO is not D v) return "verb entry must be an object";
-        foreach (var k in v.Keys) if (!VerbKeys.Contains(k)) return $"verb entry: unknown member '{k}'";
+        var verbKeys = v2 ? VerbKeysV2 : VerbKeys;
+        foreach (var k in v.Keys) if (!verbKeys.Contains(k)) return $"verb entry: unknown member '{k}'";
         if (!IsStr(IntentJs.Get(v, "verb"), 128)) return "verb entry: verb must be a non-empty string";
         var at = $"verb '{v["verb"]}'";
         if (IntentJs.Get(v, "kind") as string != "read" && IntentJs.Get(v, "kind") as string != "write") return at + ": kind must be read or write";
@@ -105,41 +168,59 @@ public static class ActionSchema
         if (parameters.Count > MaxSchemaParams) return $"{at}: more than {MaxSchemaParams} parameters";
         foreach (var (k, pd) in parameters)
         {
-            var err = ParamDeclError(k, pd, units);
+            var err = ParamDeclError(k, pd, units, v2);
             if (err != null) return at + ": " + err;
         }
+        if (v2) foreach (var p in parameters.Keys) foreach (var q in parameters.Keys) if (q != p && q.StartsWith(p + ".", StringComparison.Ordinal)) return $"{at}: parameter '{p}' is both a value and the parent of '{q}'";
         if (v.ContainsKey("reversibility") && !In(SchemaReversibility, v["reversibility"])) return at + ": unknown reversibility";
         if (v.ContainsKey("reversibility_by"))
         {
             if (v["reversibility_by"] is not D r || r.Keys.Any(k => k != "param" && k != "map" && k != "default")) return at + ": reversibility_by must be {param, map, default?}";
             if (IntentJs.Get(r, "param") is not string rp || !parameters.ContainsKey(rp)) return at + ": reversibility_by.param must be a declared parameter";
-            if (IntentJs.Get(r, "map") is not D rm || rm.Count == 0 || rm.Values.Any(x => !In(SchemaReversibility, x))) return at + ": reversibility_by.map must map values to reversibility classes";
+            var schemaRev = SchemaReversibility;
+            if (IntentJs.Get(r, "map") is not D rm || rm.Count == 0 || rm.Values.Any(x => !In(schemaRev, x))) return at + ": reversibility_by.map must map values to reversibility classes";
             if (r.ContainsKey("default") && !In(SchemaReversibility, r["default"])) return at + ": reversibility_by.default is not a reversibility class";
         }
         if (v.ContainsKey("mcp") && (!ExactKeys(v["mcp"], "tool") || !IsStr(IntentJs.Get(v["mcp"], "tool"), 128))) return at + ": mcp must be {tool}";
         if (v.ContainsKey("openapi") && (!ExactKeys(v["openapi"], "operationId") || !IsStr(IntentJs.Get(v["openapi"], "operationId"), 128))) return at + ": openapi must be {operationId}";
-        foreach (var k in new[] { "harm", "effects", "returns" }) if (v.ContainsKey(k) && v[k] is not D) return $"{at}: {k} must be an object";
+        foreach (var k in v2 ? new[] { "harm", "returns" } : new[] { "harm", "effects", "returns" }) if (v.ContainsKey(k) && v[k] is not D) return $"{at}: {k} must be an object";
+        if (v2)
+        {
+            var v2Effects = V2Effects; var traitIdRe = TraitIdRe;
+            if (IntentJs.Get(v, "effects") is not L ef || ef.Count == 0 || ef.Count > v2Effects.Length || ef.Any(x => !In(v2Effects, x))) return $"{at}: effects must be 1..{v2Effects.Length} known effects";
+            for (int i = 1; i < ef.Count; i++) if (string.CompareOrdinal((string)ef[i - 1]!, (string)ef[i]!) >= 0) return at + ": effects must be sorted and distinct";
+            if ((IntentJs.Get(v, "kind") as string == "read") != ef.All(x => x as string == "read")) return at + ": kind read must hold exactly when every effect is read";
+            if (IntentJs.Get(v, "traits") is not L tr || tr.Count > 64 || tr.Any(x => x is not string ts || !traitIdRe.IsMatch(ts))) return at + ": traits must be trait ids";
+            for (int i = 1; i < tr.Count; i++) if (string.CompareOrdinal((string)tr[i - 1]!, (string)tr[i]!) >= 0) return at + ": traits must be sorted and distinct";
+            if (Pca.B64uDecode(IntentJs.Get(v, "def"), 32) == null) return at + ": def must be a canonical base64url SHA-256 digest";
+            var fe = SchemaFloorsError(IntentJs.Get(v, "floors"));
+            if (fe != null) return $"{at}: {fe}";
+            if (v.ContainsKey("confirmation")) { var ce = ConfirmationShapeError(v["confirmation"]); if (ce != null) return $"{at}: {ce}"; }
+        }
         if (v.ContainsKey("world") && v["world"] is not L) return at + ": world must be an array";
         if (v.ContainsKey("description") && !IsStr(v["description"], 1024)) return at + ": description must be a string";
         return null;
     }
 
     /// <summary>Structural validation of a signed schema. Null = well-formed. Never throws.</summary>
-    public static string? ShapeError(object? docO)
+    public static string? ShapeError(object? docO, bool signed = true)
     {
         try
         {
             if (docO is not D doc) return "schema is not an object";
-            foreach (var k in doc.Keys) if (!DocKeys.Contains(k)) return $"unknown member '{k}'";
-            if (!OracleFacts.IsOne(IntentJs.Get(doc, "v"))) return "unsupported schema version";
+            bool v2 = IntentJs.NumOf(IntentJs.Get(doc, "v")) == 2;
+            var docKeys = v2 ? DocKeysV2 : DocKeys;
+            foreach (var k in doc.Keys) if (!docKeys.Contains(k)) return $"unknown member '{k}'";
+            if (!OracleFacts.IsOne(IntentJs.Get(doc, "v")) && !v2) return "unsupported schema version";
             if (IntentJs.Get(doc, "kind") as string != ActionSchemaKind) return $"kind must be '{ActionSchemaKind}'";
             if (!IsStr(IntentJs.Get(doc, "site"), 2048) || !IsStr(IntentJs.Get(doc, "aud"), 256) || !IsStr(IntentJs.Get(doc, "version"), 128)) return "site, aud and version must be non-empty strings";
             if (doc.ContainsKey("units"))
             {
                 if (doc["units"] is not D units) return "units must be an object";
+                var unitIdRe = UnitIdRe;
                 foreach (var (id, u) in units)
                 {
-                    if (!UnitIdRe.IsMatch(id) || id.Length > 64) return $"unit id '{id}' is malformed";
+                    if (!unitIdRe.IsMatch(id) || id.Length > 64) return $"unit id '{id}' is malformed";
                     if (u is not D ud || !IsStr(IntentJs.Get(ud, "kind"), 64)) return $"unit '{id}' must be an object with a kind";
                     if (ud.Keys.Any(k => k != "kind" && k != "currency" && k != "exponent")) return $"unit '{id}': unknown member";
                     if (ud.ContainsKey("currency") && !IsStr(ud["currency"], 16)) return $"unit '{id}': currency must be a string";
@@ -147,17 +228,34 @@ public static class ActionSchema
                 }
             }
             if (doc.ContainsKey("state") && doc["state"] is not L) return "state must be an array";
+            if (v2)
+            {
+                if (doc.ContainsKey("traits_digest") && Pca.B64uDecode(doc["traits_digest"], 32) == null) return "traits_digest must be a canonical base64url SHA-256 digest";
+                if (doc.ContainsKey("trait_defs") && (doc["trait_defs"] is not L td || td.Count > 64 || td.Any(x => x is not D))) return "trait_defs must be an array of up to 64 objects";
+                if (doc.ContainsKey("pack"))
+                {
+                    var pk = doc["pack"];
+                    if (!ExactKeys(pk, "ns", "root", "version") || !IsStr(IntentJs.Get(pk, "ns"), 64) || !IsStr(IntentJs.Get(pk, "version"), 128) || Pca.B64uDecode(IntentJs.Get(pk, "root"), 32) == null) return "pack must be {ns, version, root}";
+                }
+            }
             if (IntentJs.Get(doc, "verbs") is not L verbs || verbs.Count == 0 || verbs.Count > MaxSchemaVerbs) return $"verbs must be 1..{MaxSchemaVerbs} entries";
             var seen = new HashSet<string>();
             foreach (var v in verbs)
             {
-                var e = VerbDeclError(v, IntentJs.Get(doc, "units"));
+                var e = VerbDeclError(v, IntentJs.Get(doc, "units"), v2);
                 if (e != null) return e;
                 var name = (string)((D)v!)["verb"]!;
                 if (!seen.Add(name)) return $"verb '{name}' is declared twice";
             }
+            if (!signed)
+            {
+                if (doc.ContainsKey("sig")) return "an unsigned schema must not carry sig";
+                IntentJs.CanonBytes(doc);
+                return null;
+            }
             if (IntentJs.Get(doc, "sig") is not D sig) return "sig must be an object";
-            foreach (var k in sig.Keys) if (!SigKeys.Contains(k)) return $"sig: unknown member '{k}'";
+            var sigKeys = SigKeys;
+            foreach (var k in sig.Keys) if (!sigKeys.Contains(k)) return $"sig: unknown member '{k}'";
             var se = IntentJs.SuiteError(IntentJs.Get(sig, "alg"), sig.ContainsKey("alg"));
             if (se != null) return "sig.alg: " + se;
             if (!IsStr(IntentJs.Get(sig, "kid"), 128)) return "sig.kid must be a non-empty string";
@@ -221,6 +319,69 @@ public static class ActionSchema
         return d <= dim[mo - 1];
     }
 
+
+    // ---- v2 string formats (syntactic checks, identical in every language; none consults a registry or the network)
+    const string Ws = "\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"; // ECMAScript \s
+    const RegexOptions Ro = RegexOptions.CultureInvariant;
+    static Regex DatetimeRe => Rx.Get(@"\A([0-9]{4}-[0-9]{2}-[0-9]{2})T([01][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])(?:\.[0-9]{1,3})?Z\z", Ro);
+    static Dictionary<string, Regex> FormatRes => new()
+    {
+        ["email"] = Rx.Get(@"\A[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9\-]{1,63}(?:\.[A-Za-z0-9\-]{1,63})+\z", Ro),
+        ["url"] = Rx.Get(@"\A[A-Za-z][A-Za-z0-9+.\-]{0,31}://[^" + Ws + @"/?#]+[^" + Ws + @"]*\z", Ro),
+        ["uri_https"] = Rx.Get(@"\Ahttps://[^" + Ws + @"/?#]+[^" + Ws + @"]*\z", Ro),
+        ["uuid"] = Rx.Get(@"\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z", Ro),
+        ["phone_e164"] = Rx.Get(@"\A\+[1-9][0-9]{6,14}\z", Ro),
+        ["iso_country"] = Rx.Get(@"\A[A-Z]{2}\z", Ro),
+        ["iso_currency"] = Rx.Get(@"\A[A-Z]{3}\z", Ro),
+        ["semver"] = Rx.Get(@"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z\-]+(?:\.[0-9A-Za-z\-]+)*)?(?:\+[0-9A-Za-z\-]+(?:\.[0-9A-Za-z\-]+)*)?\z", Ro),
+        ["sha256"] = Rx.Get(@"\A[0-9a-f]{64}\z", Ro),
+    };
+    static Regex IbanRe => Rx.Get(@"\A[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}\z", Ro);
+    static Regex Cidr4Re => Rx.Get(@"\A([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})/([0-9]{1,2})\z", Ro);
+    static Regex Cidr6Re => Rx.Get(@"\A([0-9a-fA-F:]{2,39})/([0-9]{1,3})\z", Ro);
+    static Regex IdFormatRe => Rx.Get(@"\Aid:[a-z0-9_]+(?:\.[a-z0-9_]+){0,3}\z", Ro);
+    static Regex IdValueRe => Rx.Get(@"\A[A-Za-z0-9._:\-]{1,128}\z", Ro);
+
+    static bool CanonDec(string n) => int.Parse(n, System.Globalization.CultureInfo.InvariantCulture).ToString(System.Globalization.CultureInfo.InvariantCulture) == n;
+    static bool IbanOk(string s)
+    {
+        if (!IbanRe.IsMatch(s)) return false;
+        long rem = 0;
+        foreach (var ch in s.Substring(4) + s.Substring(0, 4))
+        {
+            int v = ch >= 'A' ? ch - 55 : ch - 48;
+            rem = (v > 9 ? rem * 100 + v : rem * 10 + v) % 97;
+        }
+        return rem == 1;
+    }
+    static bool CidrOk(string s)
+    {
+        var m = Cidr4Re.Match(s);
+        if (m.Success)
+            return Enumerable.Range(1, 4).All(i => int.Parse(m.Groups[i].Value) <= 255 && CanonDec(m.Groups[i].Value)) && int.Parse(m.Groups[5].Value) <= 32 && CanonDec(m.Groups[5].Value);
+        m = Cidr6Re.Match(s);
+        return m.Success && m.Groups[1].Value.Count(c => c == ':') >= 2 && !m.Groups[1].Value.Contains(":::") && int.Parse(m.Groups[2].Value) <= 128 && CanonDec(m.Groups[2].Value);
+    }
+
+    /// <summary>The checker of a v2 <c>format</c>, or null when the format is unknown. <c>id:&lt;type&gt;</c> accepts a 1..128 character safe id.</summary>
+    internal static Func<string, bool>? FormatCheck(string f)
+    {
+        if (f == "email") { var emailRe = FormatRes["email"]; return s => s.Length <= 254 && emailRe.IsMatch(s); }
+        if (f == "iban") return IbanOk;
+        if (f == "cidr") return CidrOk;
+        if (FormatRes.TryGetValue(f, out var r)) return s => r.IsMatch(s);
+        if (!IdFormatRe.IsMatch(f)) return null;
+        var idValueRe = IdValueRe;
+        return s => idValueRe.IsMatch(s);
+    }
+
+    static (string Code, string Reason)? FormatViolation(D d, string x)
+    {
+        if (!d.ContainsKey("format")) return null;
+        var ck = d["format"] is string f ? FormatCheck(f) : null; // a non-string format names no check: every value violates it
+        return ck == null || !ck(x) ? ("out_of_domain", $"not a valid {IntentRevocation.JsText(d["format"], true)}") : null;
+    }
+
     static bool StrOk(object? x, double maxLen) => x is string s && !Pca.HasLoneSurrogate(s) && IntentJs.U8Len(s) <= maxLen;
     static double NumOr(D d, string k, double dflt) => d.TryGetValue(k, out var v) && v != null ? IntentJs.NumOf(v)!.Value : dflt;
 
@@ -234,7 +395,26 @@ public static class ActionSchema
                 if (x is not string s || Pca.HasLoneSurrogate(s)) return ("bad_type", "expected a string");
                 if (IntentJs.U8Len(s) > maxLen) return ("out_of_domain", "longer than the declared max_len");
                 if (d.ContainsKey("values") && !((L)d["values"]!).Any(v => v as string == s)) return ("out_of_domain", "not one of the declared values");
-                return null;
+                return FormatViolation(d, s);
+            case "object_ref":
+                if (x is not string os || Pca.HasLoneSurrogate(os) || os.Length == 0) return ("bad_type", "expected a non-empty id string");
+                if (IntentJs.U8Len(os) > maxLen) return ("out_of_domain", "longer than the declared max_len");
+                return FormatViolation(d, os);
+            case "datetime":
+                {
+                    if (x is not string dt) return ("bad_type", "expected an RFC 3339 UTC string");
+                    var m = DatetimeRe.Match(dt);
+                    return m.Success && IsCalendarDate(m.Groups[1].Value) ? null : ("out_of_domain", "not an RFC 3339 UTC datetime YYYY-MM-DDTHH:MM:SS[.fff]Z");
+                }
+            case "duration":
+                {
+                    if (!IntentJs.IsInt(x)) return ("bad_type", "expected a safe integer (milliseconds)");
+                    double v = IntentJs.NumOf(x)!.Value;
+                    if (v < 0) return ("out_of_domain", "a duration is not negative");
+                    if (d.ContainsKey("min") && v < IntentJs.NumOf(d["min"])!.Value) return ("out_of_domain", "below min");
+                    if (d.ContainsKey("max") && v > IntentJs.NumOf(d["max"])!.Value) return ("out_of_domain", "above max");
+                    return null;
+                }
             case "integer":
                 {
                     if (!IntentJs.IsInt(x)) return ("bad_type", "expected a safe integer");

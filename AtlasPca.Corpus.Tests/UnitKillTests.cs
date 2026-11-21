@@ -102,6 +102,22 @@ public class UnitKillTests
         Assert.Null(Pca.NumberError("1000000000000000")); Assert.Null(Pca.NumberError("-5")); Assert.Null(Pca.NumberError("123"));
     }
 
+    [Fact]
+    public void AFaultAfterEveryCoreCheckPassedDenies()
+    {
+        Assert.True(Pca.VerifyPcactnCore(Valid(), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Allow);
+        Pca.CoreFaultHook = () => throw new InvalidOperationException("boom");
+        try
+        {
+            var g = Pca.VerifyPcactnCore(Valid(), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip);
+            Assert.False(g.Allow);
+            Assert.False(g.Checks["malformed"]);
+            Assert.Equal("malformed PCActn: boom", g.Reason);
+            Assert.True(g.Checks["leaf_signature"]); // every core check had passed
+        }
+        finally { Pca.CoreFaultHook = null; }
+    }
+
     [Fact] public void Canonical()
     {
         Assert.Equal("null", Pca.Canonicalize(null)); Assert.Equal("true", Pca.Canonicalize(true)); Assert.Equal("false", Pca.Canonicalize(false));
@@ -345,16 +361,6 @@ public class UnitKillTests
         Assert.Equal("", Why(Pca.VerifyChain(Li(ch[0]), issuer, true)));
     }
 
-    /// <summary>Known answer for the Ed25519 decoding constant (a static initializer: Stryker cannot activate mutants there, see the
-    /// ledger): SqrtM1^2 == -1 (mod p), and it is the constant the decoder needs (2^((p-1)/4)).</summary>
-    [Fact] public void Ed25519SqrtM1KnownAnswer()
-    {
-        var p = BigInteger.Pow(2, 255) - 19;
-        var s = (BigInteger)typeof(Pca).GetField("SqrtM1", BindingFlags.NonPublic | BindingFlags.Static)!.GetValue(null)!;
-        Assert.Equal(p - 1, BigInteger.ModPow(s, 2, p));
-        Assert.Equal(BigInteger.ModPow(2, (p - 1) / 4, p), s);
-    }
-
     /// <summary>Exact reasons on the total (R6-05) paths: a non-string parent is a type error, a parent hop whose UNSIGNED extra
     /// field cannot be canonicalised (depth 40) reaches the verifier's catch-all, null chains and null documents.</summary>
     [Fact] public void TotalPathsReasons()
@@ -365,7 +371,7 @@ public class UnitKillTests
         d = DeepChain(ch); object? deep = N("1"); for (int i = 0; i < 40; i++) deep = Li(deep); As(d[0])["x"] = deep;
         Assert.Equal("malformed capability chain: InvalidOperationException", Why(Pca.VerifyChain(d, issuer, true)));
         Assert.Equal("empty chain", Why(Pca.VerifyChain(null!, issuer, true)));
-        var v = Pca.VerifyRaw(null!, ValidGrant(), NOW, AUD);
+        var v = Pca.VerifyRaw(null!, ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.Equal("wire: PCActn is not an object", v.Reason); Assert.Single(v.Checks); Assert.False(v.Checks["wire"]);
         // signer-set hash: a non-object member and a member the canonical form refuses (lone surrogate) are null, not exceptions
         Assert.Null(Pca.SignerSetHashB64u(Li(N("5"))));
@@ -462,6 +468,16 @@ public class UnitKillTests
     static string? W(Action<D> f) { var p = Valid(); f(p); return Pca.ValidateWire(p); }
     static D Act(D p) => As(p["action"]); static D Pln(D p) => As(p["plan"]); static D Ip(D p) => As(Pln(p)["inclusion_proof"]); static D Hop(D p) => As(Ls(p["cap_chain"])[0]);
 
+    // no signed payload carries obligations (wire.ts:86, the same closed key set): a present member is refused whatever its value, a present null included
+    [Fact] public void ASignedPCActnWithAnObligationsMemberIsRefusedEvenWhenNull()
+    {
+        Assert.Null(W(p => p.Remove("obligations")));
+        foreach (var v in new object?[] { null, new List<object?>(), "x" })
+            Assert.Equal("unknown field 'obligations'", W(p => p["obligations"] = v));
+        var text = Pca.Canonicalize(Valid());
+        Assert.Equal("unknown field 'obligations'", Pca.ValidateWire(Pca.ParseStrict(text[..^1] + ",\"obligations\":null}")));
+    }
+
     [Fact] public void WireTop()
     {
         Assert.Null(Pca.ValidateWire(Valid())); Assert.Equal("PCActn is not an object", Pca.ValidateWire("x")); Assert.Equal("PCActn is not an object", Pca.ValidateWire(null));
@@ -546,49 +562,52 @@ public class UnitKillTests
     [Fact] public void VerifyApi()
     {
         var raw = (string)Vec("valid-raw-json-format-insensitive")["pcactn_json"]!;
-        var g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD);
+        var g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.True(g.Allow); Assert.Equal("", g.Reason);
-        Assert.Equal(new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" }, g.Checks.Keys.ToArray());
-        Assert.False(Pca.VerifyRaw(raw, ValidGrant(), NOW, "other").Allow);
-        Assert.Equal("audience: aud does not match this resource server / instance", Pca.VerifyRaw(raw, ValidGrant(), NOW, "other").Reason);
-        Assert.Equal("wire: PCActn is not an object", Pca.VerifyPcactnCore("x", ValidGrant(), NOW, AUD).Reason);
-        Assert.Equal("wire: " + Pca.ArtifactSizeReason, Pca.VerifyRaw(new string(' ', 524289), ValidGrant(), NOW, AUD).Reason);
-        Assert.True(Pca.VerifyRaw(raw + new string(' ', 10), ValidGrant(), NOW, AUD).Allow);
-        Assert.StartsWith("wire: strict JSON: expected a string key", Pca.VerifyRaw("{", ValidGrant(), NOW, AUD).Reason);
+        Assert.Equal(new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" }, g.Checks.Keys.ToArray());
+        Assert.False(Pca.VerifyRaw(raw, ValidGrant(), NOW, "other", planRoots: PlanRootPolicy.Skip).Allow);
+        Assert.Equal("audience: aud does not match this resource server / instance", Pca.VerifyRaw(raw, ValidGrant(), NOW, "other", planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.Equal("wire: PCActn is not an object", Pca.VerifyPcactnCore("x", ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.Equal("wire: " + Pca.ArtifactSizeReason, Pca.VerifyRaw(new string(' ', 524289), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.True(Pca.VerifyRaw(raw + new string(' ', 10), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Allow);
+        Assert.StartsWith("wire: strict JSON: expected a string key", Pca.VerifyRaw("{", ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
         D P(Action<D> f) { var p = Valid(); f(p); return p; }
-        Assert.Equal("version: unsupported ver 3 (this verifier requires 2)", Pca.VerifyPcactnCore(P(p => p["ver"] = N("3")), ValidGrant(), NOW, AUD).Reason);
+        Assert.Equal("version: unsupported ver 3 (this verifier requires 2)", Pca.VerifyPcactnCore(P(p => p["ver"] = N("3")), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
         long iat = NOW;
-        Assert.Equal("validity: exp must be greater than iat", Pca.VerifyPcactnCore(P(p => p["exp"] = N($"{iat}")), ValidGrant(), NOW, AUD).Reason);
-        Assert.Equal("validity: lifetime exceeds 3600000 ms", Pca.VerifyPcactnCore(P(p => p["exp"] = N($"{iat + 3600001}")), ValidGrant(), NOW, AUD).Reason);
-        Assert.True(Pca.VerifyPcactnCore(P(p => p["exp"] = N($"{iat + 3600000}")), ValidGrant(), NOW, AUD).Checks["validity"]);
+        Assert.Equal("validity: exp must be greater than iat", Pca.VerifyPcactnCore(P(p => p["exp"] = N($"{iat}")), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.Equal("validity: lifetime exceeds 3600000 ms", Pca.VerifyPcactnCore(P(p => p["exp"] = N($"{iat + 3600001}")), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.True(Pca.VerifyPcactnCore(P(p => p["exp"] = N($"{iat + 3600000}")), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Checks["validity"]);
         var ok = P(p => p["exp"] = N($"{iat + 600000}"));
-        Assert.Equal("validity: iat is in the future (clock skew)", Pca.VerifyPcactnCore(ok, ValidGrant(), NOW - 60001, AUD).Reason);
-        Assert.True(Pca.VerifyPcactnCore(ok, ValidGrant(), NOW - 60000, AUD).Checks["validity"]);
-        Assert.Equal("validity: the PCActn has expired", Pca.VerifyPcactnCore(ok, ValidGrant(), iat + 600001, AUD).Reason);
-        Assert.True(Pca.VerifyPcactnCore(ok, ValidGrant(), iat + 600000, AUD).Checks["validity"]);
-        g = Pca.VerifyPcactnCore(P(p => p["counter"] = N("-1")), ValidGrant(), NOW, AUD);
-        Assert.False(g.Checks["counter"]); Assert.Equal("leaf_signature: signature does not verify under the leaf holder key", g.Reason);
-        Assert.True(Pca.VerifyPcactnCore(P(p => p["counter"] = N("0")), ValidGrant(), NOW, AUD).Checks["counter"]);
-        g = Pca.VerifyPcactnCore(P(p => p["cap_chain"] = new L()), ValidGrant(), NOW, AUD);
+        Assert.Equal("validity: iat is in the future (clock skew)", Pca.VerifyPcactnCore(ok, ValidGrant(), NOW - 60001, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.True(Pca.VerifyPcactnCore(ok, ValidGrant(), NOW - 60000, AUD, planRoots: PlanRootPolicy.Skip).Checks["validity"]);
+        Assert.Equal("validity: the PCActn has expired", Pca.VerifyPcactnCore(ok, ValidGrant(), iat + 600001, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.True(Pca.VerifyPcactnCore(ok, ValidGrant(), iat + 600000, AUD, planRoots: PlanRootPolicy.Skip).Checks["validity"]);
+        g = Pca.VerifyPcactnCore(P(p => p["counter"] = N("-1")), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip);
+        Assert.False(g.Checks["counter_format"]); Assert.False(g.Checks.ContainsKey("counter")); Assert.Equal("leaf_signature: signature does not verify under the leaf holder key", g.Reason);
+        Assert.True(Pca.VerifyPcactnCore(P(p => p["counter"] = N("0")), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Checks["counter_format"]);
+        g = Pca.VerifyPcactnCore(P(p => p["cap_chain"] = new L()), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.Equal("chain: empty chain", g.Reason); Assert.False(g.Checks["chain"]); Assert.False(g.Checks["grant_ref_bound"]); Assert.False(g.Checks["leaf_signature"]);
         var first = Ls(Valid()["cap_chain"])[0];
-        Assert.Equal("chain: chain too long (max 16 hops)", Pca.VerifyPcactnCore(P(p => p["cap_chain"] = new L(Enumerable.Repeat(first, 17))), ValidGrant(), NOW, AUD).Reason);
-        Assert.Equal("chain: hop 1: broken parent link", Pca.VerifyPcactnCore(P(p => p["cap_chain"] = new L(Enumerable.Repeat(first, 16))), ValidGrant(), NOW, AUD).Reason);
-        Assert.Equal("chain: " + Pca.CaveatLimitReason, Pca.VerifyPcactnCore(P(p => As(Ls(p["cap_chain"])[0])["caveats"] = new L(Enumerable.Range(0, 257).Select(_ => (object?)M(("type", "t"))))), ValidGrant(), NOW, AUD).Reason);
+        Assert.Equal("chain: chain too long (max 16 hops)", Pca.VerifyPcactnCore(P(p => p["cap_chain"] = new L(Enumerable.Repeat(first, 17))), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.Equal("chain: hop 1: broken parent link", Pca.VerifyPcactnCore(P(p => p["cap_chain"] = new L(Enumerable.Repeat(first, 16))), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.Equal("chain: " + Pca.CaveatLimitReason, Pca.VerifyPcactnCore(P(p => As(Ls(p["cap_chain"])[0])["caveats"] = new L(Enumerable.Range(0, 257).Select(_ => (object?)M(("type", "t"))))), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
         var g2 = Clone(ValidGrant()); g2["holder"] = B32;
-        Assert.Equal("chain: chain root is not the grant", Pca.VerifyPcactnCore(Valid(), g2, NOW, AUD).Reason);
+        Assert.Equal("chain: chain root is not the grant", Pca.VerifyPcactnCore(Valid(), g2, NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
         var g4 = Clone(ValidGrant()); g4["weird"] = new object();
-        g = Pca.VerifyPcactnCore(Valid(), g4, NOW, AUD);
-        Assert.False(g.Allow); Assert.StartsWith("malformed PCActn: ", g.Reason); Assert.True(g.Checks["wire"]); Assert.True(g.Checks["version"]); Assert.False(g.Checks["chain"]); Assert.False(g.Checks["counter"]);
-        Assert.StartsWith("malformed PCActn: ", Pca.VerifyPcactnCore(P(p => p["ver"] = N("3")), g4, NOW, AUD).Reason);
-        g = Pca.VerifyPcactnCore(P(p => p["grant_ref"] = B32.Replace('q', 'r')), ValidGrant(), NOW, AUD);
+        g = Pca.VerifyPcactnCore(Valid(), g4, NOW, AUD, planRoots: PlanRootPolicy.Skip);
+        Assert.False(g.Allow); Assert.StartsWith("malformed PCActn: ", g.Reason); Assert.True(g.Checks["wire"]); Assert.True(g.Checks["version"]); Assert.False(g.Checks["chain"]); Assert.False(g.Checks["counter_format"]);
+        Assert.False(g.Checks["malformed"]);
+        // reason ??= why: an earlier failure keeps the reason, as the reference's CoreMalformed
+        g = Pca.VerifyPcactnCore(P(p => p["ver"] = N("3")), g4, NOW, AUD, planRoots: PlanRootPolicy.Skip);
+        Assert.StartsWith("version: ", g.Reason); Assert.False(g.Checks["malformed"]); Assert.False(g.Allow);
+        g = Pca.VerifyPcactnCore(P(p => p["grant_ref"] = B32.Replace('q', 'r')), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.False(g.Checks["grant_ref_bound"]); Assert.Equal("grant_ref_bound: grant_ref is not the id of the root capability in cap_chain", g.Reason);
-        Assert.Equal("plan_inclusion: action is not a node of the committed plan", Pca.VerifyPcactnCore(P(p => Act(p)["verb"] = "other"), ValidGrant(), NOW, AUD).Reason);
-        Assert.True(Pca.VerifyPcactnCore(P(p => Pln(p).Remove("conditions_digest")), ValidGrant(), NOW, AUD).Checks["plan_inclusion"]);
-        Assert.Equal("leaf_signature: signature does not verify under the leaf holder key", Pca.VerifyPcactnCore(P(p => p["sig"] = B64), ValidGrant(), NOW, AUD).Reason);
-        g = Pca.VerifyPcactnCore(Valid(), ValidGrant(), NOW, AUD, Array.Empty<string>());
+        Assert.Equal("plan_inclusion: action is not a node of the committed plan", Pca.VerifyPcactnCore(P(p => Act(p)["verb"] = "other"), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        Assert.True(Pca.VerifyPcactnCore(P(p => Pln(p).Remove("conditions_digest")), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Checks["plan_inclusion"]);
+        Assert.Equal("leaf_signature: signature does not verify under the leaf holder key", Pca.VerifyPcactnCore(P(p => p["sig"] = B64), ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip).Reason);
+        g = Pca.VerifyPcactnCore(Valid(), ValidGrant(), NOW, AUD, Array.Empty<string>(), planRoots: PlanRootPolicy.Skip);
         Assert.Equal("chain: hop 0: signature suite 'ed25519' is not allowed by this verifier's suite policy", g.Reason); Assert.False(g.Checks["leaf_signature"]);
-        Assert.True(Pca.VerifyPcactnCore(Valid(), ValidGrant(), NOW, AUD, new[] { "ed25519" }).Allow);
+        Assert.True(Pca.VerifyPcactnCore(Valid(), ValidGrant(), NOW, AUD, new[] { "ed25519" }, planRoots: PlanRootPolicy.Skip).Allow);
         var tm = Pca.ThresholdMessage(Valid()); var pv = Valid(); pv["threshold"] = M(("shares", new L())); pv["pq_sig"] = "zz"; pv["sig"] = "other";
         Assert.Equal(tm, Pca.ThresholdMessage(pv)); pv["alg"] = "ed25519"; Assert.NotEqual(tm, Pca.ThresholdMessage(pv)); Assert.Equal(18 + 32, tm.Length);
     }
@@ -775,25 +794,25 @@ public class UnitKillTests
 
     [Fact] public void IntentVerify()
     {
-        var baseKeys = new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" };
+        var baseKeys = new[] { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" };
         var withIntent = baseKeys.Append("intent").ToArray();
         var raw = (string)Vec("valid-raw-json-format-insensitive")["pcactn_json"]!;
-        var g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: false));
+        var g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: false), planRoots: PlanRootPolicy.Skip);
         Assert.True(g.Allow); Assert.Equal(baseKeys, g.Checks.Keys.ToArray());
-        g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: true));
+        g = Pca.VerifyRaw(raw, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: true), planRoots: PlanRootPolicy.Skip);
         Assert.False(g.Allow);
         Assert.Equal(withIntent, g.Checks.Keys.ToArray());
         Assert.False(g.Checks["intent"]);
         Assert.Equal("intent: this verifier requires an intent binding but the PCActn carries none", g.Reason);
         var p = Valid();
         p["intent"] = IntentSlot();
-        g = Pca.VerifyPcactnCore(p, ValidGrant(), NOW, AUD);
+        g = Pca.VerifyPcactnCore(p, ValidGrant(), NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.Equal(withIntent, g.Checks.Keys.ToArray());
         Assert.True(g.Checks["wire"]); Assert.False(g.Checks["leaf_signature"]); Assert.False(g.Checks["intent"]);
         var bound = Clone(ValidGrant()); bound["caveats"] = IntentGrant(IntentCommit)["caveats"];
-        Assert.True(Pca.VerifyPcactnCore(p, bound, NOW, AUD).Checks["intent"]);
+        Assert.True(Pca.VerifyPcactnCore(p, bound, NOW, AUD, planRoots: PlanRootPolicy.Skip).Checks["intent"]);
         p["intent"] = null;
-        g = Pca.VerifyPcactnCore(p, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: true));
+        g = Pca.VerifyPcactnCore(p, ValidGrant(), NOW, AUD, intentPolicy: new IntentPolicy(Require: true), planRoots: PlanRootPolicy.Skip);
         Assert.Equal(new[] { "wire" }, g.Checks.Keys.ToArray());
         Assert.Equal("wire: 'intent' must be an object", g.Reason);
     }
@@ -808,7 +827,7 @@ public class UnitKillTests
     const string INone = "this verifier requires an intent binding but the PCActn carries none";
     const string INoEnv = "the root grant carries no envelope goal commitment to bind the intent to";
     const string IOpen = "intent ref / map_digest / goal_salt do not open the root grant's goal commitment";
-    static readonly string[] BaseKeys = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter" };
+    static readonly string[] BaseKeys = { "wire", "version", "audience", "validity", "chain", "grant_ref_bound", "plan_inclusion", "leaf_signature", "counter_format" };
     static readonly string[] IntentKeys = BaseKeys.Append("intent").ToArray();
 
     static D SlotWith(string k, object? v) => IntentSlot().Also(i => i[k] = v);
@@ -967,54 +986,54 @@ public class UnitKillTests
     [Fact] public void IntentKillVerifySigned()
     {
         var root = IntentRoot();
-        var g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD);
+        var g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.True(g.Allow, g.Reason);
         Assert.Equal(BaseKeys, g.Checks.Keys.ToArray());
-        g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD, intentPolicy: Pol());
+        g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD, intentPolicy: Pol(), planRoots: PlanRootPolicy.Skip);
         Assert.True(g.Allow); Assert.Equal(BaseKeys, g.Checks.Keys.ToArray());
-        g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD, intentPolicy: Pol(min: 0));
+        g = Pca.VerifyPcactnCore(SignedWithIntent(root, null), root, NOW, AUD, intentPolicy: Pol(min: 0), planRoots: PlanRootPolicy.Skip);
         Assert.False(g.Allow); Assert.Equal(IntentKeys, g.Checks.Keys.ToArray());
         Assert.Equal("intent: " + INone, g.Reason);
         var p = SignedWithIntent(root, IntentSlot());
-        g = Pca.VerifyPcactnCore(p, root, NOW, AUD);
+        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.True(g.Allow, g.Reason);
         Assert.Equal("", g.Reason);
         Assert.Equal(IntentKeys, g.Checks.Keys.ToArray());
         Assert.True(g.Checks["intent"]);
-        Assert.True(Pca.VerifyRaw(Pca.Canonicalize(p), root, NOW, AUD, intentPolicy: Pol(require: true)).Allow);
-        Assert.True(Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(true, 950000, 4310000)).Allow);
-        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(min: 950001));
+        Assert.True(Pca.VerifyRaw(Pca.Canonicalize(p), root, NOW, AUD, intentPolicy: Pol(require: true), planRoots: PlanRootPolicy.Skip).Allow);
+        Assert.True(Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(true, 950000, 4310000), planRoots: PlanRootPolicy.Skip).Allow);
+        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(min: 950001), planRoots: PlanRootPolicy.Skip);
         Assert.False(g.Allow);
         Assert.Equal("intent: intent fidelity 950000 ppm is below the policy minimum 950001", g.Reason);
         foreach (var k in BaseKeys) Assert.True(g.Checks[k], k);
-        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(max: 4309999));
+        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(max: 4309999), planRoots: PlanRootPolicy.Skip);
         Assert.False(g.Allow); Assert.False(g.Checks["intent"]);
-        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(min: -1));
+        g = Pca.VerifyPcactnCore(p, root, NOW, AUD, intentPolicy: Pol(min: -1), planRoots: PlanRootPolicy.Skip);
         Assert.False(g.Allow); Assert.Equal("intent: " + IMis, g.Reason);
         var edge = IntentSlot().Also(i => { i["fidelity_ppm"] = N("1000000"); i["residual_risk_ppm"] = N("0"); });
-        Assert.True(Pca.VerifyPcactnCore(SignedWithIntent(root, edge), root, NOW, AUD).Allow);
+        Assert.True(Pca.VerifyPcactnCore(SignedWithIntent(root, edge), root, NOW, AUD, planRoots: PlanRootPolicy.Skip).Allow);
         edge["fidelity_ppm"] = N("0"); edge["residual_risk_ppm"] = N("9007199254740991");
-        Assert.True(Pca.VerifyPcactnCore(SignedWithIntent(root, edge), root, NOW, AUD).Allow);
+        Assert.True(Pca.VerifyPcactnCore(SignedWithIntent(root, edge), root, NOW, AUD, planRoots: PlanRootPolicy.Skip).Allow);
         // signed: tampering after signing breaks leaf_signature while the binding itself still holds
         var t = SignedWithIntent(root, IntentSlot());
         As(t["intent"])["fidelity_ppm"] = N("999999");
-        g = Pca.VerifyPcactnCore(t, root, NOW, AUD);
+        g = Pca.VerifyPcactnCore(t, root, NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.False(g.Allow);
         Assert.False(g.Checks["leaf_signature"]);
         Assert.True(g.Checks["intent"]);
         Assert.Equal(IntentKeys, g.Checks.Keys.ToArray());
         var s = SignedWithIntent(root, IntentSlot()).Also(x => x.Remove("intent"));
-        g = Pca.VerifyPcactnCore(s, root, NOW, AUD);
+        g = Pca.VerifyPcactnCore(s, root, NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.False(g.Checks["leaf_signature"]);
         Assert.Equal(BaseKeys, g.Checks.Keys.ToArray());
-        g = Pca.VerifyPcactnCore(SignedWithIntent(root, SlotWith("goal_salt", "other")), root, NOW, AUD);
+        g = Pca.VerifyPcactnCore(SignedWithIntent(root, SlotWith("goal_salt", "other")), root, NOW, AUD, planRoots: PlanRootPolicy.Skip);
         Assert.Equal("intent: " + IOpen, g.Reason);
         foreach (var k in BaseKeys) Assert.True(g.Checks[k], k);
         foreach (var bad in new object?[] { null, "x", Li(), SlotWith("fidelity_ppm", N("1000001")), SlotWith("residual_risk_ppm", N("-1")), SlotWith("goal_salt", new string('é', 64) + "a") })
         {
             var w = SignedWithIntent(root, IntentSlot());
             w["intent"] = bad;
-            g = Pca.VerifyPcactnCore(w, root, NOW, AUD, intentPolicy: Pol(require: true));
+            g = Pca.VerifyPcactnCore(w, root, NOW, AUD, intentPolicy: Pol(require: true), planRoots: PlanRootPolicy.Skip);
             Assert.False(g.Allow);
             Assert.Equal(new[] { "wire" }, g.Checks.Keys.ToArray());
             Assert.StartsWith("wire: ", g.Reason);
@@ -1055,8 +1074,8 @@ public class UnitKillTests
         Assert.Equal("intent residual risk 4310000 ppm exceeds the policy maximum 4309999", Decide(IntentSlot(), g, IntentPolicy.FromJsonText("{\"max_residual_risk_ppm\":4309999.0}")));
         var root = IntentRoot();
         var pc = SignedWithIntent(root, IntentSlot());
-        Assert.True(Pca.VerifyPcactnCore(pc, root, NOW, AUD, intentPolicy: IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":950000.0,\"max_residual_risk_ppm\":4.31e6}")).Allow);
-        var v = Pca.VerifyPcactnCore(pc, root, NOW, AUD, intentPolicy: IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":950000.5}"));
+        Assert.True(Pca.VerifyPcactnCore(pc, root, NOW, AUD, intentPolicy: IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":950000.0,\"max_residual_risk_ppm\":4.31e6}"), planRoots: PlanRootPolicy.Skip).Allow);
+        var v = Pca.VerifyPcactnCore(pc, root, NOW, AUD, intentPolicy: IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":950000.5}"), planRoots: PlanRootPolicy.Skip);
         Assert.False(v.Allow);
         Assert.Equal("intent: " + IMis, v.Reason);
         Assert.ThrowsAny<Exception>(() => IntentPolicy.FromJsonText("{\"min_fidelity_ppm\":}"));

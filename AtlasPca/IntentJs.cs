@@ -22,6 +22,15 @@ public static class IntentJs
     internal static bool IsArr(object? o) => o is List<object?>;
     internal static Dictionary<string, object?> Obj(object? o) => (Dictionary<string, object?>)o!;
     internal static List<object?> Arr(object? o) => (List<object?>)o!;
+    /// <summary>The members of a parsed object in JavaScript's <c>Object.keys</c> order: canonical array-index keys first (ascending),
+    /// then the rest in text order.</summary>
+    internal static IEnumerable<string> JsKeys(IEnumerable<string> keys)
+    {
+        var all = keys.ToList();
+        static bool Idx(string k, out uint n) => uint.TryParse(k, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out n) && n != uint.MaxValue && (k == "0" || k[0] != '0');
+        return all.Where(k => Idx(k, out _)).OrderBy(k => { Idx(k, out var n); return n; }).Concat(all.Where(k => !Idx(k, out _)));
+    }
+
     /// <summary>Own member (JSON null counts as present, like a defined property).</summary>
     internal static bool Own(object? o, string k) => o is Dictionary<string, object?> d && d.ContainsKey(k);
     internal static object? Get(object? o, string k) => o is Dictionary<string, object?> d && d.TryGetValue(k, out var v) ? v : null;

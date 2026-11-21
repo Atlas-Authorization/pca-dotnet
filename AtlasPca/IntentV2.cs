@@ -30,6 +30,20 @@ public sealed class IntentV2Context
     /// <summary>A copy with <c>params</c> replaced (a host supplying the plaintext params it parsed from the request).</summary>
     public IntentV2Context WithParams(object? parameters) => new(new D(Raw) { ["params"] = IntentJs.Normalize(parameters) }, WellFormed);
 
+    /// <summary>A copy with the verifier defaults of <c>authorize</c> (TypeScript <c>intentV2.params ?? ctx.params</c>, <c>intentV2.env ?? ctx.env</c>):
+    /// a missing or null <c>params</c> is the operation's, a missing or null <c>env</c> is the authorize context's (absent when that has none).</summary>
+    internal IntentV2Context WithDefaults(object? parameters, object? hostEnv)
+    {
+        var raw = new D(Raw);
+        if (raw.GetValueOrDefault("params") == null) raw["params"] = IntentJs.Normalize(parameters);
+        if (raw.GetValueOrDefault("env") == null)
+        {
+            raw.Remove("env");
+            if (hostEnv != null) raw["env"] = IntentJs.Normalize(hostEnv);
+        }
+        return new IntentV2Context(raw, WellFormed);
+    }
+
     internal object? Get(params string[] path)
     {
         object? cur = Raw;
@@ -55,6 +69,12 @@ public static class IntentV2
     {
         public List<Check> Checks { get; } = new();
         public D Env { get; } = new();
+        /// <summary>The action schema the action was checked against (when the schema check passed).</summary>
+        public object? Schema { get; internal set; }
+        /// <summary>The worlds decided by a single oracle (their <c>env.world.&lt;name&gt;</c> is model-derived, rule 21).</summary>
+        public List<string> SingleSource { get; internal set; } = new();
+        /// <summary>Rule 21's compatibility mode is in effect and a grant reads a model-derived path (reported degraded).</summary>
+        public bool Legacy { get; internal set; }
     }
 
     /// <summary>True iff any v2 check would be reported (a malformed present context fails closed, so it counts).</summary>
@@ -81,7 +101,8 @@ public static class IntentV2
         if (c.TryGetValue("policy", out var pol))
         {
             var pr = (D)pol!;
-            foreach (var k in pr.Keys) if (k is not ("session" or "schema" or "acc" or "map")) return $"policy: unknown member '{k}'";
+            foreach (var k in pr.Keys) if (k is not ("session" or "schema" or "acc" or "map" or "model_polarity")) return $"policy: unknown member '{k}'";
+            if (pr.TryGetValue("model_polarity", out var mpol) && mpol is not ("strict" or "legacy")) return "policy.model_polarity must be 'strict' or 'legacy'";
             if (!OptD(pr, "session")) return "policy.session must be an object";
             if (pr.TryGetValue("session", out var ps))
             {
@@ -114,7 +135,13 @@ public static class IntentV2
                 if (o.ContainsKey("max_residual_risk_ppm") && !IntentJs.IsNonNeg(o["max_residual_risk_ppm"])) return "policy.map.max_residual_risk_ppm must be a non-negative safe integer";
             }
         }
+        if (!OptD(c, "reviewers") || (c.ContainsKey("reviewers") && IntentJs.Get(c["reviewers"], "keys") is not L)) return "reviewers must be {keys: [...]}";
+        if (c.TryGetValue("call_context", out var cc) && (cc is not L ccl || ccl.Any(x => x is not string))) return "call_context must be an array of strings";
+        if (!OptD(c, "actions")) return "actions must be an object";
+        if (c.TryGetValue("actions", out var ac))
+            foreach (var k in new[] { "records", "keys", "reapprovals" }) if (!OptL(ac, k)) return $"actions.{k} must be an array";
         if (!OptD(c, "params")) return "params must be an object";
+        if (!OptD(c, "env")) return "env must be an object";
         foreach (var k in new[] { "schema", "session", "acc" }) if (!OptD(c, k)) return k + " must be an object";
         if (!OptD(c, "map")) return "map must be an object";
         if (c.TryGetValue("map", out var mc)) foreach (var k in ((D)mc!).Keys) if (k != "disclosure") return $"map: unknown member '{k}'";
@@ -155,7 +182,7 @@ public static class IntentV2
         return sc is D && IntentJs.Get(sc, "docs") is L && IntentJs.Get(sc, "keys") is L ? null : "the schema context must be {docs: [...], keys: [...]}";
     }
 
-    static string? SessionCtxError(IntentV2Context? ctx)
+    internal static string? SessionCtxError(IntentV2Context? ctx)
     {
         if (ctx == null || !ctx.Has("session")) return null;
         var se = ctx.Get("session");
@@ -168,7 +195,7 @@ public static class IntentV2
         return null;
     }
 
-    static string? AccCtxError(IntentV2Context? ctx)
+    internal static string? AccCtxError(IntentV2Context? ctx)
     {
         if (ctx == null || !ctx.Has("acc")) return null;
         var a = ctx.Get("acc");
@@ -212,6 +239,12 @@ public static class IntentV2
         var v = ActionSchema.Verify(doc, ctx!.Get("schema", "keys"));
         if (v != null) return "schema does not verify: " + v;
         if (IntentJs.Get(doc, "aud") as string != IntentJs.Get(p, "aud") as string) return "schema aud does not match the PCActn aud";
+        if (IntentJs.NumOf(IntentJs.Get(doc, "v")) == 2)
+        {
+            // rule 22, integrity half: the document's materialized floors and traits are recomputed, never trusted
+            var fe = Actions.SchemaFloorError((D)doc!, ctx.Get("reviewers"));
+            if (fe != null) return "schema_floor_forged: " + fe;
+        }
         if (CGet(ctx, "params") is not D parameters) return "no plaintext params to check against the schema (closed world needs them)";
         if (Pca.ParamsDigest(parameters) != IntentJs.Get(IntentJs.Get(p, "action"), "params_digest") as string) return "params do not hash to action.params_digest";
         var c = ActionSchema.ConformAction(doc, VerbOf(p), parameters);
@@ -235,7 +268,7 @@ public static class IntentV2
         return null;
     }
 
-    static string? SessionStep(D p, D grant, IntentV2Context? ctx, double now)
+    internal static string? SessionStep(D p, D grant, IntentV2Context? ctx, double now)
     {
         bool maxAgeSet = ctx != null && ctx.Has("policy", "session", "max_revocation_age_s");
         var maxAgeS = CGet(ctx, "policy", "session", "max_revocation_age_s");
@@ -457,7 +490,7 @@ public static class IntentV2
             Run(output, "schema", clockOk, () =>
             {
                 var why = SchemaStep(p, ctx, out var matched);
-                if (why == null) output.Env["canon"] = ActionSchema.CanonProjection(matched, VerbOf(p), (D)ctx!.Get("params")!);
+                if (why == null) { output.Env["canon"] = ActionSchema.CanonProjection(matched, VerbOf(p), (D)ctx!.Get("params")!); output.Schema = matched; }
                 return why;
             });
         }
@@ -519,21 +552,150 @@ public static class IntentV2
                     var c = wb.Check(name);
                     if (c == null) continue;
                     if (c == "pass") output.Checks.Add(new Check(name, true, null));
-                    else output.Checks.Add(new Check(name, false, c == "question" ? "intent_required: " + (wb.Reason ?? "a question is required") : (wb.Reason ?? "rejected")));
+                    else output.Checks.Add(new Check(name, false, c == "question" ? "intent_required: " + wb.Reason : wb.Reason));
                 }
-                if (wb.Outcome != "deny")
-                {
-                    if (wb.World != null) output.Env["world"] = wb.World;
-                    if (wb.Prov != null) output.Env["prov"] = wb.Prov;
-                    if (wb.Class != null) output.Env["class"] = wb.Class;
-                }
+                // a deny outcome has World / Prov / Class nulled (IntentWB.Deny), so nothing is exported for it
+                if (wb.World != null) output.Env["world"] = wb.World;
+                if (wb.Prov != null) output.Env["prov"] = wb.Prov;
+                if (wb.Class != null) output.Env["class"] = wb.Class;
+                if (wb.SingleSource is { Count: > 0 }) output.SingleSource = new List<string>(wb.SingleSource);
             }
         }
         else if (mapActive)
         {
             Run(output, "map", clockOk, () => MapStep(p, ctx));
         }
+        ModelRules(p, grant, ctx, output, clockOk, action);
         return output;
+    }
+
+    /// <summary>The predicate lists a model-derived path could widen: the grant's allow-list and the ceilings (V5 layers).</summary>
+    static L AllowSidePredicates(D? env, IntentV2Context? ctx)
+    {
+        var lists = new L { env == null ? null : IntentJs.Get(env, "predicates") };
+        if (ctx?.Get("layers") is D lm)
+            foreach (var k in new[] { "org", "site", "std" }) lists.Add(IntentJs.Get(IntentJs.Get(lm, k), "predicates"));
+        return lists;
+    }
+
+    /// <summary>Rule 22 and rules 20 and 21 (intent-v2.ts modelRules), evaluated last so the verifier-computed env is complete. All read the signed
+    /// ENVELOPE of the stored grant: <c>pin</c> iff <c>envelope.actions</c> is present; <c>traits</c> (22) iff the schema is v2 (the checked one,
+    /// or the one the pin resolves); <c>units</c> (20) is reported iff <c>envelope.units</c> is present; <c>tighten</c> (21) iff
+    /// <c>envelope.tighten</c> or a <c>model_polarity</c> (envelope or policy) is present, or a grant-side <c>where</c> reads a
+    /// model-derived env path (so that case is refused, never silently skipped). A PCActn with none of these verifies byte-identically to
+    /// a verifier without the two rules.</summary>
+    static void ModelRules(D p, D grant, IntentV2Context? ctx, Decision output, bool clockOk, D action)
+    {
+        var env = Pca.ReadEnvelope(grant);
+        var preds = AllowSidePredicates(env, ctx);
+        var verb = VerbOf(p);
+        (string? Why, object? Doc)? schemaMemo = null;
+        (string? Why, object? Doc) SchemaFor()
+        {
+            if (schemaMemo == null)
+            {
+                string? why = null;
+                object? matched = output.Schema;
+                if (matched == null) why = SchemaStep(p, ctx, out matched);
+                schemaMemo = (why, matched);
+            }
+            return schemaMemo.Value;
+        }
+        bool hasPin = env != null && env.ContainsKey("actions");
+        if (hasPin)
+        {
+            Run(output, "pin", clockOk, () =>
+            {
+                var s = SchemaFor();
+                if (s.Why != null) return s.Why;
+                var a = ctx?.Get("actions");
+                var d = Actions.DecidePin(new D
+                {
+                    ["pin"] = env!["actions"], ["doc"] = s.Doc, ["verb"] = verb,
+                    ["records"] = IntentJs.Get(a, "records") ?? new L(), ["keys"] = IntentJs.Get(a, "keys") ?? new L(), ["reapprovals"] = IntentJs.Get(a, "reapprovals") ?? new L(),
+                    ["grant"] = new D { ["id"] = IntentJs.Get(grant, "id"), ["issuer"] = IntentJs.Get(grant, "issuer") },
+                });
+                if (IntentJs.Get(d, "ok") is true) return null;
+                var diff = IntentJs.Own(d, "needs_reapproval") ? $" (re-approve diff {IntentJs.Get(d, "needs_reapproval")})" : "";
+                return $"{(IntentJs.Get(d, "escalate") is true ? "escalate: " : "")}{IntentJs.Get(d, "code")}: {IntentJs.Get(d, "reason")}{diff}";
+            });
+        }
+        if (TraitsDue(output, hasPin, SchemaFor))
+        {
+            Run(output, "traits", clockOk, () =>
+            {
+                var s = SchemaFor();
+                if (s.Why != null) return s.Why;
+                var pin = hasPin && Actions.ActionPinError(env!["actions"]) == null ? (D)env["actions"]! : null;
+                var caveats = new L();
+                if (IntentJs.Get(env, "caveats") is L ec) foreach (var c in ec) if (IntentJs.Get(c, "type") is string t) caveats.Add(t);
+                if (IntentJs.Get(pin, "caveats") is L pc) foreach (var c in pc) if (c is string) caveats.Add(c);
+                var d = Actions.Rule22Decide((D)s.Doc!, verb,
+                    new D { ["caveats"] = caveats, ["max_esc"] = IntentJs.Get(pin, "max_esc") ?? 3L, ["preauth_esc"] = IntentJs.Get(pin, "preauth_esc") ?? 0L },
+                    ctx?.Get("call_context") as L ?? new L());
+                return d == "allow" ? null
+                    : d == "escalate" ? "escalate: the action floors need a caveat, context or confirmation the grant does not provide (rule 22)"
+                    : "the action floors exceed what the grant authorizes (rule 22)";
+            });
+        }
+        if (env != null && env.ContainsKey("units"))
+        {
+            Run(output, "units", clockOk, () =>
+            {
+                var s = SchemaFor();
+                if (s.Why != null) return s.Why;
+                var doc = s.Doc;
+                var v = ActionSchema.SchemaVerb(doc, verb);
+                var input = new D { ["units"] = env["units"], ["verb"] = verb, ["predicates"] = preds };
+                if (IntentJs.Own(doc, "units")) input["schema_units"] = IntentJs.Get(doc, "units");
+                if (IntentJs.Own(v, "params")) input["verb_params"] = IntentJs.Get(v, "params");
+                var (ok, reason) = PcaDecision.DecideUnits(input);
+                return ok ? null : reason;
+            });
+        }
+        var single = output.SingleSource;
+        bool polCtxP = ctx != null && ctx.Has("policy", "model_polarity");
+        object? polCtx = polCtxP ? ctx!.Get("policy", "model_polarity") : null;
+        object? polarity = null; bool hasPol = false;
+        if (polCtxP && polCtx is "strict") { }
+        else if (polCtxP) { polarity = polCtx; hasPol = true; }
+        else if (env != null && env.ContainsKey("model_polarity")) { polarity = env["model_polarity"]; hasPol = true; }
+        bool hasTighten = env != null && env.ContainsKey("tighten");
+        if (hasTighten || hasPol || polCtxP || PcaDecision.ModelPathsRead(preds, single).Count > 0)
+        {
+            Run(output, "tighten", clockOk, () =>
+            {
+                var merged = new D();
+                if (ctx?.Get("env") is D hostEnv) foreach (var (k, x) in hostEnv) merged[k] = x;
+                foreach (var (k, x) in output.Env) merged[k] = x;
+                var input = new D { ["predicates"] = preds, ["single_source"] = new L(single.Cast<object?>()), ["context"] = new D { ["action"] = action, ["env"] = merged } };
+                if (hasTighten) input["tighten"] = env!["tighten"];
+                if (hasPol) input["polarity"] = polarity;
+                var r = PcaDecision.DecideTighten(input);
+                if (r.Legacy) output.Legacy = true;
+                return r.Outcome == "ok" ? null : r.Reason ?? "refused";
+            });
+        }
+    }
+
+    /// <summary>Whether rule 22's <c>traits</c> check is reported. A schema step that throws here was already reported by the pin's Run and
+    /// has no document, so <see cref="Decide"/> stays total.</summary>
+    static bool TraitsDue(Decision output, bool hasPin, Func<(string? Why, object? Doc)> schemaFor)
+    {
+        if (IntentJs.NumOf(IntentJs.Get(output.Schema, "v")) == 2) return true;
+        if (!hasPin) return false;
+        try { return IntentJs.NumOf(IntentJs.Get(schemaFor().Doc, "v")) == 2; }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>The grant's envelope carries a pin (actions) / units / tighten / model_polarity, or a grant-side where reads a model-derived path: the v2
+    /// pipeline then needs the plaintext params and the host env even when the host configured no v2 context.</summary>
+    internal static bool NeedsModelRules(D grant)
+    {
+        var env = Pca.ReadEnvelope(grant);
+        if (env == null) return false;
+        if (env.ContainsKey("actions") || env.ContainsKey("units") || env.ContainsKey("tighten") || env.ContainsKey("model_polarity")) return true;
+        return PcaDecision.ModelPathsRead(new L { IntentJs.Get(env, "predicates") }).Count > 0;
     }
 
     /// <summary>Rule 19 (<c>map</c>, V15 Z0): reported iff the PCActn's <c>intent_session.map_form</c> is <c>"commit"</c> or the

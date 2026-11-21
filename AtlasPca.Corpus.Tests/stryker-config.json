@@ -2,7 +2,8 @@
   "stryker-config": {
     "project": "AtlasPca.csproj",
     "test-projects": [
-      "AtlasPca.Corpus.Tests.csproj"
+      "AtlasPca.Corpus.Tests.csproj",
+      "../AtlasPca.AspNetCore.Tests/AtlasPca.AspNetCore.Tests.csproj"
     ],
     "mutation-level": "Complete",
     "reporters": [
@@ -17,7 +18,7 @@
     },
     "ignore-mutations": [],
     "disable-bail": false,
-    "coverage-analysis": "all",
+    "coverage-analysis": "perTest",
     "additional-timeout": 60000,
     "test-case-filter": "Category!=Huge"
   }
