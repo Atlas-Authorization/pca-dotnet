@@ -1,0 +1,44 @@
+name: FN-DSA
+
+# AtlasPca.Fndsa: the real FN-DSA backend through P/Invoke over libfndsa (Pornin's fn-dsa 0.4.0, built here from the flagship's crate). FIPS 206 is
+# unpublished, so this is a draft best-guess pinned in lockstep with the TypeScript reference. Replays the 480-case suite corpus (mock backend) and the
+# real-primitive known-answer vectors, which must reproduce byte for byte.
+on:
+  push:
+    branches: [main, 'ci/**']
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  fndsa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus and the FN-DSA crate from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: libfndsa (cargo build --features capi)
+        run: |
+          echo "ATLAS_PCA_LIBFNDSA=$(.github/scripts/build-libfndsa.sh "$RUNNER_TEMP/fndsa" "$RUNNER_TEMP/mono/packages/pca-fndsa-wasm/crate" | tail -1)/libfndsa.so" >> "$GITHUB_ENV"
+          echo "ATLAS_PCA_LIBFNDSA_REQUIRED=1" >> "$GITHUB_ENV"
+      - name: Suite corpus (480 cases, mock backend)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests/AtlasPca.Corpus.Tests.csproj -c Release --filter "FullyQualifiedName~RefFndsaTests"
+      - name: Real FN-DSA known-answer replay and core suite dispatch (CoreSuiteTests)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Fndsa.Tests/AtlasPca.Fndsa.Tests.csproj -c Release

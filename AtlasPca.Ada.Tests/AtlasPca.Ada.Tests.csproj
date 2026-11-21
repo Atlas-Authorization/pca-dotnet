@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Replays the WHATWG domain-to-ASCII corpus through the Ada shim (libatlasada: ATLAS_PCA_LIBADA, or beside the test assembly). Under CI=true or
+       ATLAS_PCA_ADA_REQUIRED=1 a missing library fails instead of skipping. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="test-data/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

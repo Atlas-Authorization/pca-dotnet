@@ -22,6 +22,15 @@ public static class IntentJs
     internal static bool IsArr(object? o) => o is List<object?>;
     internal static Dictionary<string, object?> Obj(object? o) => (Dictionary<string, object?>)o!;
     internal static List<object?> Arr(object? o) => (List<object?>)o!;
+    /// <summary>The members of a parsed object in JavaScript's <c>Object.keys</c> order: canonical array-index keys first (ascending),
+    /// then the rest in text order.</summary>
+    internal static IEnumerable<string> JsKeys(IEnumerable<string> keys)
+    {
+        var all = keys.ToList();
+        static bool Idx(string k, out uint n) => uint.TryParse(k, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out n) && n != uint.MaxValue && (k == "0" || k[0] != '0');
+        return all.Where(k => Idx(k, out _)).OrderBy(k => { Idx(k, out var n); return n; }).Concat(all.Where(k => !Idx(k, out _)));
+    }
+
     /// <summary>Own member (JSON null counts as present, like a defined property).</summary>
     internal static bool Own(object? o, string k) => o is Dictionary<string, object?> d && d.ContainsKey(k);
     internal static object? Get(object? o, string k) => o is Dictionary<string, object?> d && d.TryGetValue(k, out var v) ? v : null;
@@ -128,18 +137,18 @@ public static class IntentJs
     internal static string? SuiteOf(Dictionary<string, object?> artifact) => SuiteOf(Get(artifact, "alg"), artifact.ContainsKey("alg"));
 
     /// <summary><c>bindSuiteFields(base, alg, pqPk)</c>: a non-ed25519 suite signs its name and PQ key into the body.</summary>
-    internal static Dictionary<string, object?> BindSuiteFields(Dictionary<string, object?> body, object? alg, bool algPresent, object? pqPk, bool pqPresent)
+    public static Dictionary<string, object?> BindSuiteFields(Dictionary<string, object?> body, object? alg, bool algPresent, object? pqPk, bool pqPresent)
     {
         var s = SuiteOf(alg, algPresent);
         if (s == null || s == "ed25519") return body;
         var o = new Dictionary<string, object?>(body) { ["alg"] = s };
-        if (pqPresent) o["pq_pk"] = pqPk;
+        o["pq_pk"] = pqPresent ? pqPk : InteropJs.JsX.Undef; // every non-ed25519 suite carries a PQ key: an absent one is undefined, which no canonical form accepts
         return o;
     }
 
     /// <summary><c>verifyPinnedSuite</c>: ed25519 verifies under <paramref name="identity"/>; a PQ / hybrid suite only under
     /// the PQ key the VERIFIER pins for it (<paramref name="pqPins"/>), never the artifact's own key alone. Never throws.</summary>
-    internal static bool VerifyPinnedSuite(object? alg, bool algPresent, string identity, object? artifactPqPk, byte[] msg,
+    public static bool VerifyPinnedSuite(object? alg, bool algPresent, string identity, object? artifactPqPk, byte[] msg,
         object? sig, object? pqSig, IReadOnlyDictionary<string, string>? pqPins)
     {
         try

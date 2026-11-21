@@ -1,0 +1,38 @@
+name: Endemic LWE base OT
+
+# AtlasPca.MpcLweOt: the post-quantum endemic base OT through P/Invoke over a small C library (liblweot) that wraps the audited pqc_kyber K-PKE
+# (built here from the flagship's crate). The native replays the TypeScript reference corpus, byte for byte.
+on:
+  push:
+    branches: [main, 'ci/**']
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  lwe-ot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus and the lattice crate from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: liblweot (cargo build --features capi)
+        run: echo "ATLAS_LWEOT_LIB=$(.github/scripts/build-liblweot.sh "$RUNNER_TEMP/lweot" "$RUNNER_TEMP/mono/packages/pca-mpc-lwe-ot-wasm/crate" | tail -1)/liblweot.so" >> "$GITHUB_ENV"
+      - name: Endemic OT replay
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.MpcLweOt.Tests/AtlasPca.MpcLweOt.Tests.csproj -c Release

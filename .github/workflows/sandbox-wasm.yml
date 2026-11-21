@@ -1,0 +1,34 @@
+name: Sandbox WebAssembly hosts
+
+# AtlasPca.Wasm: Wasmtime NuGet core-module host and the pinned-subprocess component host. Runs against the real reference host (pca-wasmtime-host, built here from the flagship's crate and pinned by its SHA-256):
+# CI=true makes the real-host tests FAIL when PCA_WASMTIME_HOST_BIN / PCA_WASMTIME_HOST_SHA256 are missing, so a green run never skips them.
+on:
+  push:
+    branches: [main, 'ci/**']
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sandbox-wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (shared corpus and the reference host crate from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: pca-wasmtime-host (cargo build --release; exports PCA_WASMTIME_HOST_BIN and PCA_WASMTIME_HOST_SHA256)
+        run: .github/scripts/build-wasmtime-host.sh "$RUNNER_TEMP/wasmtime-host" "$RUNNER_TEMP/mono/packages/pca-sandbox/wasmtime-host"
+      - name: Sandbox host tests (restores the Wasmtime package)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Wasm.Tests/AtlasPca.Wasm.Tests.csproj -c Release

@@ -1,0 +1,44 @@
+name: FHE (BFV on Microsoft SEAL)
+
+# AtlasPca.Fhe: the homomorphic risk gate on the official Microsoft.Research.SEALNet binding (SEAL 4.1.1). Wire compatibility with the TypeScript
+# reference (node-seal 5.1.7, SEAL 4.1.2; stream headers carry major.minor only) is shown by replaying a corpus generated here by the reference:
+# the native evaluator must reproduce the reference's evaluated ciphertexts byte for byte (re-saved uncompressed).
+on:
+  push:
+    branches: [main, 'ci/**']
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  fhe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: node-seal reference corpus
+        run: .github/scripts/fhe-seal-corpus.sh "$RUNNER_TEMP/fhe-seal.json.gz"
+      - name: BFV replay and round trip
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        env:
+          PCA_FHE_SEAL_CORPUS: ${{ runner.temp }}/fhe-seal.json.gz
+        run: dotnet test AtlasPca.Fhe.Tests/AtlasPca.Fhe.Tests.csproj -c Release

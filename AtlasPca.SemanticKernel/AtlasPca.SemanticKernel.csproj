@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AtlasPca.SemanticKernel</RootNamespace>
+    <Version>0.5.0</Version>
+    <!-- Maturity tier of the package: stable | production | experimental (the PCA maturity tiers page defines them). Package tag + assembly metadata. -->
+    <Maturity>experimental</Maturity>
+    <PackageTags>pca;proof-carrying-authority;semantic-kernel;maturity-experimental</PackageTags>
+    <Description>Atlas Proof-Carrying Authority for Microsoft Semantic Kernel: a function-invocation filter that makes every kernel function call a proof-carrying action.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>maturity</_Parameter1>
+      <_Parameter2>$(Maturity)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.SemanticKernel.Abstractions" Version="1.30.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+  </ItemGroup>
+</Project>
