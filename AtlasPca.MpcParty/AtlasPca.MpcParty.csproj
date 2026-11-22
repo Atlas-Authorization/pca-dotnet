@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- One MPC node (party or dealer) as its own process: pca-mpc-party <config.json> | keygen <dir> <cn>. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>pca-mpc-party</AssemblyName>
+    <RootNamespace>AtlasPca.MpcParty</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AtlasPca.Mpc/AtlasPca.Mpc.csproj" />
+    <!-- managed adapter for the lwe base-OT kind; its native liblweot stays optional (missing = the lwe roles refuse) -->
+    <ProjectReference Include="../AtlasPca.MpcLweOt/AtlasPca.MpcLweOt.csproj" />
+  </ItemGroup>
+</Project>

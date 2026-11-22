@@ -1,0 +1,1189 @@
+[
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Equality mutation: hs.Count != 1",
+  "line": "if (hs.Count == 1) return hs[0];",
+  "occurrence": 1,
+  "reason": "Build with `hs.Count != 1`: a one-element list no longer returns, Split(1) is 1, so Build(hs.GetRange(0, 1)) calls itself on the same one-element list without end and the stack overflows, which ends the test host. The unmutated recursion stops at the one-element list; the unmutated suite passes under the same limits in every shard. A stack overflow cannot be caught in .NET, so no assertion can decide this mutant."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/IntentAcc.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "for (long i = 1; i <= w; i++) output.Add(\"pending:\" + i);",
+  "occurrence": 1,
+  "reason": "With `i--` and w >= 1, i goes 1, 0, -1 and so on, so `i <= w` stays true (until long underflow, far past memory) and output.Add appends without end until the 3 GiB heap cap throws OutOfMemoryException. The unmutated loop stops after w additions, and the unmutated suite passes under the same cap in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Issue.cs",
+  "mutant": "Equality mutation: hs.Count != 1",
+  "line": "if (hs.Count == 1) return;",
+  "occurrence": 1,
+  "reason": "Prove with `hs.Count != 1`: a one-element list no longer returns, Pca.Split(1) is 1, so Prove recurses on hs.GetRange(0, 1) without end and the stack overflows, which ends the test host. The unmutated recursion stops at one element; the unmutated suite passes under the same limits in every shard. A stack overflow cannot be caught in .NET."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Actions.cs",
+  "mutant": "Equality mutation: hs.Count != 1",
+  "line": "if (hs.Count == 1) return hs[0];",
+  "occurrence": 1,
+  "reason": "SubRoot with `hs.Count != 1`: a one-element list no longer returns, Split(1) is 1, so SubRoot recurses on hs.GetRange(0, 1) without end and the stack overflows, which ends the test host. The unmutated recursion stops at one element; the unmutated suite passes under the same limits in every shard. A stack overflow cannot be caught in .NET."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Arithmetic mutation: i * hs.Stores.Count",
+  "line": "var (ok, err) = Claim(hs.Stores[i % hs.Stores.Count], key, counter);",
+  "occurrence": 1,
+  "reason": "`i * Count` indexes past the store list for every i >= 1, on a Race worker thread, and an unhandled exception on that thread ends the test host. The unmutated `i % Count` is always in range, and the unmutated suite passes in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Arithmetic mutation: n * hs.Stores.Count",
+  "line": "if (Claim(hs.Stores[n % hs.Stores.Count], key2, baseCounter + n).Ok) Volatile.Write(ref admitted[n], 1);",
+  "occurrence": 1,
+  "reason": "`n * Count` indexes past the store list for every n >= 1, on a Race worker thread, and an unhandled exception on that thread ends the test host. The unmutated `n % Count` is always in range, and the unmutated suite passes in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Sigstore.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 21,
+  "reason": "Block removal of the body of the `for (int p = t.Body; p < t.End;)` loop in Sigstore.Kids: the body is the only place `p = c.End` advances p, and it is empty now, so `p < t.End` stays true and the loop spins forever on any constructed element with content (no allocation, a pure spin). The unmutated code terminates on the same inputs, and the unmutated suite passes under the same limits in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Sigstore.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 51,
+  "reason": "Block removal of the body of `for (int o = 2; o < list.Length;)` in the SCT-list walk: `o += 2 + n` is the only advance of o, so o stays 2 and the loop never ends for any list with a length of at least 3 (every embedded SCT list the verifier reaches here). The unmutated code terminates on the same inputs, and the unmutated suite passes under the same limits in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Predicates.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 13,
+  "reason": "Block removal of the body of `while (si < s.Length)` in GlobMatch: ti and si are only changed inside that body, so for any non-empty subject string the loop condition never changes and the loop spins forever. The unmutated code terminates on the same inputs, and the unmutated suite passes under the same limits in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Predicates.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "if (t != null && t[0] == Star) { starTi = ++ti; starSi = si; }",
+  "occurrence": 1,
+  "reason": "Block removal of the `{ starTi = ++ti; starSi = si; }` branch taken when the glob token is a star: the branch now neither advances ti nor si, so the first star token is re-read on every pass and the loop never ends (the branch is taken before any other, so a glob with a star and a non-empty subject spins)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Predicates.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "else if (t != null && (t[0] == One || s[si] == t[1])) { ti++; si++; }",
+  "occurrence": 1,
+  "reason": "Block removal of the `{ ti++; si++; }` branch taken on a matching or one-char token: when it is taken neither index moves, the same token is retested against the same character forever, so any glob whose first token matches the first character of a non-empty subject spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Predicates.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "else if (starTi >= 0) { ti = starTi; si = ++starSi; }",
+  "occurrence": 1,
+  "reason": "Block removal of the star-backtrack branch `{ ti = starTi; si = ++starSi; }`: the branch is taken when a literal token mismatches after a star, and now it changes nothing, so the same mismatch is retried forever (a glob like `a*b` against `axc` reaches it); the unmutated branch advances starSi each time, so it ends."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Predicates.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (ti < toks.Length && toks[ti][0] == Star) ti++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `ti++` in the trailing-star skip `while (ti < toks.Length && toks[ti][0] == Star) ti++;`: ti no longer advances, so when the subject is consumed and the next glob token is a star, the loop condition stays true forever (a glob ending in `*` reaches it)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Predicates.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 20,
+  "reason": "Block removal of the body of `while (queue.Count > 0 && visited < MaxMemberClosureNodes)` in MemberClosure: the body holds the only Dequeue and the only `visited++`, so the queue never shrinks and visited never grows and the loop spins forever on any non-empty start node (the queue has the start node in it)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestCert.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 15,
+  "reason": "Block removal of the body of `for (int p = e.Start; p < e.End;)` in AttestCert.Kids: `p = k.End` is the only advance, so p stays at e.Start and the loop spins forever on any certificate element with content. The unmutated code terminates on the same inputs, and the unmutated suite passes under the same limits in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Issue.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "if (hs.Count == 1) return;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `return;` in Issue.Prove: the base case `hs.Count == 1` no longer returns, Pca.Split(1) is 1, so Prove recurses on hs.GetRange(0, 1), the same one-element list, with no end and the stack overflows, which ends the test host and cannot be caught in .NET. The unmutated recursion stops at the one-element list."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "gate.Set();",
+  "occurrence": 1,
+  "reason": "Statement mutation of `gate.Set()` in Race: every worker thread blocks in `gate.Wait()` on a gate that is never set, so the `t.Join()` loop waits for threads that cannot finish, and the call never returns. The unmutated Race releases all threads together and returns when they end."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Equality mutation: i > n",
+  "line": "for (int i = 0; i < n; i++) h.Stores.Add(c.Open!() ?? throw new InvalidOperationException(\"Open returned null\"));",
+  "occurrence": 1,
+  "reason": "Equality mutation `i > n` in OpenN's `for (int i = 0; i < n; i++)`: i starts at 0 and n is at least 1, so the loop body never runs, OpenN returns an empty store list, and the first `i % hs.Stores.Count` (Count 0) on a Race worker thread in ClaimConcurrent (handles is at least 1, copies at least 1) throws DivideByZeroException there, unhandled, which ends the test host. The unmutated loop opens n stores."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "for (int i = 0; i < n; i++) h.Stores.Add(c.Open!() ?? throw new InvalidOperationException(\"Open returned null\"));",
+  "occurrence": 1,
+  "reason": "PostIncrement-to-PostDecrement `i--` in OpenN's loop `for (int i = 0; i < n; i++) h.Stores.Add(c.Open!()...)`: i runs 0, -1, -2 and so on, `i < n` stays true, and every pass opens one more store and adds it to the list, so memory grows until the 3 GiB heap cap throws OutOfMemoryException (the reported failure). The unmutated loop opens exactly n stores."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "for (int i = 0; i < n; i++) h.Stores.Add(c.Open!() ?? throw new InvalidOperationException(\"Open returned null\"));",
+  "occurrence": 1,
+  "reason": "Statement mutation that removes `h.Stores.Add(c.Open!() ...)` from OpenN's loop body: no store is ever added, OpenN returns an empty list, and the first `i % hs.Stores.Count` (Count 0) on a Race worker thread in ClaimConcurrent throws DivideByZeroException there, unhandled, which ends the test host. The unmutated body adds one opened store per pass."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Conditional (false) mutation: (false?4 :c.Handles)",
+  "line": "int rounds = c.Rounds <= 0 ? 10 : c.Rounds, copies = c.Copies <= 0 ? 16 : c.Copies, handles = !c.Shared ? 1 : c.Handles <= 0 ? 4 : c.Handles;",
+  "occurrence": 1,
+  "reason": "Conditional mutation `(false ? 4 : c.Handles)` in `handles = !c.Shared ? 1 : c.Handles <= 0 ? 4 : c.Handles`: it differs from the original only when Shared is true and Handles <= 0 (the default 0), where handles becomes 0, OpenN opens no store, and ClaimConcurrent's first `i % hs.Stores.Count` (Count 0) on a Race worker thread (copies is at least 1) throws DivideByZeroException there, unhandled, which ends the test host. For every other input the value is the same as the original."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Equality mutation: c.Handles < 0",
+  "line": "int rounds = c.Rounds <= 0 ? 10 : c.Rounds, copies = c.Copies <= 0 ? 16 : c.Copies, handles = !c.Shared ? 1 : c.Handles <= 0 ? 4 : c.Handles;",
+  "occurrence": 1,
+  "reason": "Equality mutation `c.Handles < 0` in `c.Handles <= 0 ? 4 : c.Handles`: it differs from the original only when Handles == 0 (the default) with Shared true, where handles becomes 0, OpenN opens no store, and ClaimConcurrent's first `i % hs.Stores.Count` (Count 0) on a Race worker thread throws DivideByZeroException there, unhandled, which ends the test host. For every other Handles the value is the same as the original."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Arithmetic mutation: copies - 1",
+  "line": "var admitted = new int[copies + 1];",
+  "occurrence": 1,
+  "reason": "Arithmetic mutation `copies - 1` for `new int[copies + 1]` in ClaimConcurrent: the array has copies - 1 slots but the race writes `admitted[n]` for n up to copies, so the worker that holds the highest counter, which every conforming store admits (the unmutated check `admitted[copies] != 1` passes in the suite), writes past the end on a Race worker thread and throws IndexOutOfRangeException there, unhandled, which ends the test host."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Arithmetic mutation: idx - 1",
+  "line": "int n = idx + 1;",
+  "occurrence": 1,
+  "reason": "Arithmetic mutation `idx - 1` for `int n = idx + 1` in ClaimConcurrent's second race: worker 0 gets n = -1 and indexes `hs.Stores[n % hs.Stores.Count]` = Stores[-1], which throws ArgumentOutOfRangeException on a Race worker thread, unhandled, which ends the test host. Worker 0 always exists (copies is at least 1); the unmutated n is 1..copies and always in range."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "for (long i = 1; i <= copies; i++)",
+  "occurrence": 1,
+  "reason": "PostIncrement-to-PostDecrement `i--` in `for (long i = 1; i <= copies; i++)` of ClaimConcurrent's replay check: i runs 1, 0, -1 and so on, so `i <= copies` stays true, and the body returns only when a claim is admitted or errors; a conforming store refuses every counter below the highest it holds (the very property this loop asserts), so no pass returns and the loop spins until long underflow, which is not reached in any test time. The unmutated loop stops after copies passes."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestIntel.cs",
+  "mutant": "Logical mutation: cur != null || !seen.Contains(K(cur.RawSubject))",
+  "line": "while (cur != null && !seen.Contains(K(cur.RawSubject)))",
+  "occurrence": 1,
+  "reason": "Logical mutation `cur != null || !seen.Contains(...)` in VerifyPckChain's chain walk: the loop no longer stops on an already-seen subject. On any chain that ends in a self-issued root (the only chain the unmutated code accepts), `bySubject[K(root.RawIssuer)]` is the root itself, so cur is the root on every pass, never null, and `ordered.Add(cur)` grows the list without bound until the heap cap. The unmutated walk stops at the first repeated subject, which for the root is the second visit."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestIntel.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "seen.Add(K(cur.RawSubject));",
+  "occurrence": 1,
+  "reason": "Statement mutation that removes `seen.Add(K(cur.RawSubject))` in VerifyPckChain's chain walk: seen is never filled, so the `!seen.Contains(...)` stop never fires. On any chain that ends in a self-issued root, cur becomes the root again on every pass (its issuer is itself), never null, so `ordered.Add(cur)` grows without bound until the heap cap. The unmutated walk records the root and stops at its second visit."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/ArgProvenance.cs",
+  "mutant": "Arithmetic mutation: i - 1",
+  "line": "for (int i = text.IndexOf(needle, StringComparison.Ordinal); i >= 0; i = text.IndexOf(needle, i + 1, StringComparison.Ordinal))",
+  "occurrence": 1,
+  "reason": "Arithmetic mutation `i - 1` for `i + 1` in `i = text.IndexOf(needle, i + 1, Ordinal)` of OccursAsToken: the search restarts at i - 1 and finds the same occurrence at i again, so whenever an occurrence at i >= 1 fails the boundary test (needle \"ab\" inside \"xab\") i never changes and the loop spins forever (an occurrence at i = 0 throws ArgumentOutOfRangeException instead). The unmutated advance moves strictly forward and ends."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/ArgProvenance.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 38,
+  "reason": "Block removal of the body of `while (IntentJs.U8Len(s) > 256)` in ArgProvenance.Clip: the body is the only place s gets shorter, so for any label over 256 UTF-8 bytes the condition never changes and the loop spins forever (no allocation). The unmutated body at least halves s each pass."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Ledger.cs",
+  "mutant": "Equality mutation: (fn & 1) != 1",
+  "line": "while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Equality mutation `(fn & 1) != 1` in the leading-ones strip `while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }` of Ledger consistency verification: when fn == 0 (oldSize 1, a valid RFC 9162 proof), `(0 & 1) != 1` is true and shifting leaves fn at 0, so the loop spins forever. The unmutated condition is false for fn = 0."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Ledger.cs",
+  "mutant": "Bitwise mutation: fn | 1",
+  "line": "while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Bitwise mutation `fn | 1` for `fn & 1` in `while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }` of Ledger consistency verification: `(fn | 1) == 1` holds for fn = 0 and fn = 1, and the body shifts fn to 0, where it still holds, so for oldSize 1 or 2 the loop spins forever. The unmutated condition is false for fn = 0."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Ledger.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Block removal of `{ fn >>= 1; sn >>= 1; }` in the leading-ones strip `while ((fn & 1) == 1)` of Ledger consistency verification: with an odd fn (oldSize even) nothing changes in the body, so the condition stays true and the loop spins forever. The unmutated body shifts fn until it is even."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Ledger.cs",
+  "mutant": "Logical mutation: (fn & 1) == 0 || fn != 0",
+  "line": "while ((fn & 1) == 0 && fn != 0) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Logical mutation `(fn & 1) == 0 || fn != 0` for `&&` in `while ((fn & 1) == 0 && fn != 0)` of Ledger consistency verification: an even fn satisfies the first operand and an odd fn satisfies the second (odd is never 0), so the condition is true for every fn, including 0 after the shifts, and the loop spins forever once entered. The unmutated `&&` stops at the first odd value or at 0."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Ledger.cs",
+  "mutant": "Negate expression: !((fn & 1) == 0 && fn != 0)",
+  "line": "while ((fn & 1) == 0 && fn != 0) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Negate expression `!((fn & 1) == 0 && fn != 0)` in the shift loop of Ledger consistency verification (entered with fn odd or fn == sn): the loop now runs while fn is odd or 0 and shifts right, so for an fn of all ones in binary (1, 3, 7, ...) it shifts to 0, where the negated condition is true, and spins forever. The unmutated loop stops at the first even non-zero fn."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Ledger.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "while ((fn & 1) == 0 && fn != 0) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Block removal of `{ fn >>= 1; sn >>= 1; }` in the shift loop `while ((fn & 1) == 0 && fn != 0)` of Ledger consistency verification: when the loop is entered with an even non-zero fn (reached when fn == sn is even), nothing in the empty body changes the condition, so it spins forever. The unmutated body shifts fn to an odd value."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/IntentAcc.cs",
+  "mutant": "Equality mutation: i > w",
+  "line": "for (long i = 1; i <= w; i++) output.Add(\"pending:\" + i);",
+  "occurrence": 1,
+  "reason": "Equality mutation `i > w` in `for (long i = 1; i > w; i++) output.Add(\"pending:\" + i)` of IntentAcc.MonitorStates: for w <= 0 (a missing or non-integer `within` gives w = 0) `1 > w` is true and i only grows, so the loop adds strings without end until the heap cap throws OutOfMemoryException; for w >= 1 it adds nothing. The unmutated loop adds w entries and ends."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/ProvenanceGate.cs",
+  "mutant": "Logical mutation: (fn & 1) == 0 || fn != 0",
+  "line": "while ((fn & 1) == 0 && fn != 0)",
+  "occurrence": 1,
+  "reason": "Logical mutation `(fn & 1) == 0 || fn != 0` for `&&` in the shift loop `while ((fn & 1) == 0 && fn != 0)` of ProvenanceGate's consistency check: an even fn satisfies the first operand and an odd fn the second, so the condition is true for every fn, including 0, and the loop spins forever once entered (entered when `(fn & 1) == 0` at the guard above). The unmutated `&&` stops at the first odd value or 0."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/ProvenanceGate.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 9,
+  "reason": "Block removal of `{ fn >>= 1; sn >>= 1; }` in the shift loop `while ((fn & 1) == 0 && fn != 0)` of ProvenanceGate's consistency check: the loop is entered only with an even fn, which is non-zero when fn == sn > 0, and the empty body never changes it, so the loop spins forever. The unmutated body shifts fn to an odd value."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestCommon.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (a < b && IsJsSpace(s[a])) a++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `a++` in AttestUtil.JsTrim's `while (a < b && IsJsSpace(s[a])) a++;`: a never advances, so any string that starts with a JS space character (and is not empty) makes the loop spin forever. The unmutated loop moves a past the leading spaces."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestCommon.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (b > a && IsJsSpace(s[b - 1])) b--;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `b--` in AttestUtil.JsTrim's `while (b > a && IsJsSpace(s[b - 1])) b--;`: b never moves down, so any string that ends with a JS space character (after a is placed) makes the loop spin forever. The unmutated loop moves b past the trailing spaces."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/IntentMap.cs",
+  "mutant": "Equality mutation: k * 2 <= n",
+  "line": "static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }",
+  "occurrence": 1,
+  "reason": "Equality mutation `k * 2 <= n` in IntentMap.Split: for n a power of two (n = 2 is the smallest tree) the loop runs one step more and Split(n) returns n, so TreeRoot on that list recurses on GetRange(0, n), the same list, with no end and the stack overflows, which ends the test host. The unmutated Split returns n / 2 for a power of two."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/IntentMap.cs",
+  "mutant": "Negate expression: !(k * 2 < n)",
+  "line": "static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }",
+  "occurrence": 1,
+  "reason": "Negate expression `!(k * 2 < n)` in IntentMap.Split: for n = 2 (and every n where `k * 2 >= n` holds at k = 1) the loop doubles k until the long wraps (k becomes 2^62), Split returns 2^62, the `(int)` cast in TreeRoot gives 0, and TreeRoot recurses on GetRange(0, 0), an empty list, which again takes the same path with no end, and the stack overflows, which ends the test host. The unmutated Split returns the largest power of two below n."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/IntentMap.cs",
+  "mutant": "MultiplyAssignmentExpression to DivideAssignmentExpression mutation: k /= 2",
+  "line": "static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }",
+  "occurrence": 1,
+  "reason": "MultiplyAssign-to-DivideAssign `k /= 2` in IntentMap.Split: for n >= 3 the loop is entered, k becomes 0 and `0 * 2 < n` stays true, so the loop spins forever; for n <= 2 it is not entered. The unmutated body doubles k until k * 2 >= n."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/IntentMap.cs",
+  "mutant": "Logical mutation: fn % 2 == 0 || fn != 0",
+  "line": "if (fn % 2 == 0) while (fn % 2 == 0 && fn != 0) { fn /= 2; sn /= 2; }",
+  "occurrence": 1,
+  "reason": "Logical mutation `fn % 2 == 0 || fn != 0` for `&&` in RootFromPath's loop `while (fn % 2 == 0 && fn != 0) { fn /= 2; sn /= 2; }`: an even fn satisfies the first operand and an odd fn the second, so the condition is true for every fn including 0, and the loop spins forever once entered. The unmutated `&&` stops at the first odd value or 0."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/IntentMap.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "if (fn % 2 == 0) while (fn % 2 == 0 && fn != 0) { fn /= 2; sn /= 2; }",
+  "occurrence": 1,
+  "reason": "Block removal of `{ fn /= 2; sn /= 2; }` in RootFromPath's loop `while (fn % 2 == 0 && fn != 0)`: when entered (fn even, non-zero, reached for fn == sn) the empty body never changes the condition, so the loop spins forever. The unmutated body halves fn until it is odd."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/JsCanon.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "else if (char.IsHighSurrogate(c) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1])) { sb.Append(c).Append(s[i + 1]); i++; }",
+  "occurrence": 1,
+  "reason": "PostIncrement-to-PostDecrement `i--` in the surrogate-pair branch `{ sb.Append(c).Append(s[i + 1]); i++; }` of JsCanon.Str: together with the loop's own `i++` the index does not move, so the same high surrogate and its pair are appended again on every pass without end, and memory grows until the heap cap throws OutOfMemoryException. It happens for any string with a valid surrogate pair; the unmutated branch skips the pair."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Refusals.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (n < text.Length && (text[n] is >= 'a' and <= 'z' || text[n] == '_')) n++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `n++` in Refusals.Explain's `while (n < text.Length && (text[n] is >= 'a' and <= 'z' || text[n] == '_')) n++;`: n never advances, so any reason that starts with a lowercase letter or an underscore (every refusal reason does) makes the loop spin forever. The unmutated loop scans the check name."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Actions.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 73,
+  "reason": "Block removal of the body of `while (seg.Count > 1)` in Actions.PackProof: seg is only shortened inside the body, so for any pack of two or more digests the condition never changes and the loop spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Actions.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "if (idx < k) { path.Add(new D { [\"side\"] = \"R\", [\"hash\"] = Pca.B64u(SubRoot(seg.GetRange(k, seg.Count - k))) }); seg = seg.GetRange(0, k); }",
+  "occurrence": 1,
+  "reason": "Block removal of the `{ path.Add(...); seg = seg.GetRange(0, k); }` branch (taken when idx < k) in Actions.PackProof's loop: nothing in the empty branch shortens seg or changes idx, so the same branch is taken on every pass and the loop spins forever for any digest in the left half of the tree. The unmutated branch shrinks seg to the left half."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Actions.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "else { path.Add(new D { [\"side\"] = \"L\", [\"hash\"] = Pca.B64u(SubRoot(seg.GetRange(0, k))) }); seg = seg.GetRange(k, seg.Count - k); idx -= k; }",
+  "occurrence": 1,
+  "reason": "Block removal of the `{ path.Add(...); seg = seg.GetRange(k, ...); idx -= k; }` branch (taken when idx >= k) in Actions.PackProof's loop: nothing in the empty branch shortens seg or lowers idx, so the same branch is taken on every pass and the loop spins forever for any digest in the right half. The unmutated branch shrinks seg to the right half."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestDer.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 9,
+  "reason": "Block removal of the body of `while (p < tbs.End)` in AttestDer's role reader: `p = el.End` is the only advance, so p stays at tbs.Start and the loop spins forever on any certificate with a non-empty tbsCertificate."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestDer.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 10,
+  "reason": "Block removal of the body of the extension walk `while (q < seq.End)` in AttestDer's role reader: `q = ext.End` is the only advance, so q never moves and the loop spins forever on any certificate with a non-empty extensions sequence."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestDer.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 20,
+  "reason": "Block removal of the body of `while (p < tbs.End)` in AttestDer's extension-table reader: `p = el.End` is the only advance, so p stays at tbs.Start and the loop spins forever on any non-empty tbsCertificate."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestDer.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 21,
+  "reason": "Block removal of the body of the extension walk `while (q < seq.End)` in AttestDer's extension-table reader: `q = ext.End` is the only advance, so q never moves and the loop spins forever on any certificate with a non-empty extensions sequence."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < b.Length && b[i] == 0) i++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `i++` in AttestJws.TrimZeros's `while (i < b.Length && b[i] == 0) i++;`: i never advances, so any byte array that starts with a zero byte makes the loop spin forever. The unmutated loop moves i past the leading zeros."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (pos < src.Length && src[pos] is ' ' or '\\t' or '\\n' or '\\r') pos++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `pos++` in the whitespace skipper `Ws()` of the JSON parser: pos never advances, so any whitespace character at the current position makes the loop spin forever (every pretty-printed document reaches it). The unmutated loop moves past the whitespace."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "else while (IsDigit(Peek())) pos++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `pos++` in the integer-digit loop `else while (IsDigit(Peek())) pos++;` of the JSON number parser: pos never advances, so any number that starts with a digit 1-9 makes the loop spin forever. The unmutated loop consumes the digits."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (IsDigit(Peek())) pos++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `pos++` in the fraction-digit loop `while (IsDigit(Peek())) pos++;` after the '.' of the JSON number parser: pos never advances, so any number with at least one fraction digit makes the loop spin forever. The unmutated loop consumes the digits."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (IsDigit(Peek())) pos++;",
+  "occurrence": 2,
+  "reason": "Statement mutation of `pos++` in the exponent-digit loop `while (IsDigit(Peek())) pos++;` of the JSON number parser: pos never advances, so any number with at least one exponent digit makes the loop spin forever. The unmutated loop consumes the digits."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 36,
+  "reason": "Block removal of the `if (c == '\\\\') { ... }` body in the string reader Str(): the escape branch is empty, so on a backslash pos does not move and the `while (true)` loop reads the same backslash again without end, for any string that has an escape. The unmutated branch consumes the escape."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: pos--",
+  "line": "pos++;",
+  "occurrence": 6,
+  "reason": "PostIncrement-to-PostDecrement `pos--` after the backslash in Str(): pos moves back, so Peek() reads the character before the backslash; when that character is one of the escape letters (the opening quote `\"` for an escape at the start of the string is one) the following `pos++` returns pos to the backslash and the loop reads the same escape again without end; otherwise it reports a different error. The unmutated code steps over the backslash."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: pos--",
+  "line": "if (e is '\"' or '\\\\' or '/' or 'b' or 'f' or 'n' or 'r' or 't') pos++;",
+  "occurrence": 1,
+  "reason": "PostIncrement-to-PostDecrement `pos--` on the accepted single-character escapes in Str(): after a valid escape such as `\\n` pos steps back onto the backslash instead of past the letter, so the loop reads the same escape again on every pass and spins forever for any string that has a single-character escape. The unmutated code steps past the letter."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestJws.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "else pos++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of the `else pos++;` (an ordinary string character) in Str(): pos does not advance, so the `while (true)` loop reads the same ordinary character again on every pass and spins forever for any string with an ordinary character. The unmutated code consumes it."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Approval.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "if (char.IsHighSurrogate(s[i]) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1])) i++;",
+  "occurrence": 1,
+  "reason": "PostIncrement-to-PostDecrement `i--` in Approval.Lone's `if (IsHighSurrogate(s[i]) && ... IsLowSurrogate(s[i + 1])) i++;`: with the loop's own `i++` the index does not move, so the same valid surrogate pair is tested again on every pass and the loop spins forever for any string with a valid surrogate pair. The unmutated branch skips the pair."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "if (s[i] != '&') { sb.Append(s[i]); i++; continue; }",
+  "occurrence": 1,
+  "reason": "Statement mutation that removes `i++` from `if (s[i] != '&') { sb.Append(s[i]); i++; continue; }` in AttestXml.Decode (the one of the line's statement removals that matches the observed OutOfMemoryException): i does not advance, so the same character is appended to the StringBuilder on every pass, the builder grows without end until the heap cap, for any text with an '&' and a character before it or an ordinary first character. The unmutated branch advances.",
+  "multiplicity": 3
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Actions.cs",
+  "mutant": "Equality mutation: k * 2 <= n",
+  "line": "static int Split(int n) { int k = 1; while (k * 2 < n) k *= 2; return k; }",
+  "occurrence": 1,
+  "reason": "Equality mutation `k * 2 <= n` in Actions.Split: for n a power of two (2 is the smallest) the loop runs one step more and Split(n) returns n, so SubRoot on that list recurses on GetRange(0, n), the same list, with no end and the stack overflows, which ends the test host. The unmutated Split returns n / 2 for a power of two."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Actions.cs",
+  "mutant": "MultiplyAssignmentExpression to DivideAssignmentExpression mutation: k /= 2",
+  "line": "static int Split(int n) { int k = 1; while (k * 2 < n) k *= 2; return k; }",
+  "occurrence": 1,
+  "reason": "MultiplyAssign-to-DivideAssign `k /= 2` in Actions.Split: for n >= 3 the loop is entered, k becomes 0 and `0 * 2 < n` stays true, so the loop spins forever; for n <= 2 it is not entered. The unmutated body doubles k until k * 2 >= n."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Authorize.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "else if (char.IsHighSurrogate(c) && i + 1 < s.Length && char.IsLowSurrogate(s[i + 1])) { sb.Append(c).Append(s[i + 1]); i++; }",
+  "occurrence": 1,
+  "reason": "PostIncrement-to-PostDecrement `i--` in the surrogate-pair branch `{ sb.Append(c).Append(s[i + 1]); i++; }` of Authorize's JSON string quoter: together with the loop's own `i++` the index does not move, so the same high surrogate and its pair are appended again on every pass without end, and memory grows until the heap cap throws OutOfMemoryException. It happens for any string with a valid surrogate pair; the unmutated branch skips the pair."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Equality mutation: s[i] == '<'",
+  "line": "if (s[i] != '<')",
+  "occurrence": 1,
+  "reason": "Equality mutation `s[i] == '<'` for `s[i] != '<'` in AttestXml.Parse: at a '<' (every document starts with one) the text branch is taken, `s.IndexOf('<', i)` returns i, the text is empty and i is set to i, so the branch `continue`s without advancing and spins forever. The unmutated branch is taken only for text."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (j < rest.Length && !IsSpace(rest[j]) && rest[j] != '/' && rest[j] != '>') j++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `j++` in ParseStartTag's tag-name scan `while (j < rest.Length && !IsSpace(rest[j]) && rest[j] != '/' && rest[j] != '>') j++;`: j never advances, so any start tag whose name has at least one character spins forever. The unmutated loop scans the name."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < rest.Length && IsSpace(rest[i])) i++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `i++` in ParseStartTag's space skip `while (i < rest.Length && IsSpace(rest[i])) i++;` (before each attribute): i never advances, so any start tag with a space after the name or between attributes spins forever. The unmutated loop skips the space."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (k < rest.Length && !IsSpace(rest[k]) && rest[k] != '=' && rest[k] != '>' && rest[k] != '/') k++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `k++` in ParseStartTag's attribute-name scan `while (k < rest.Length && !IsSpace(rest[k]) && rest[k] != '=' && ...) k++;`: k never advances, so any start tag with an attribute spins forever. The unmutated loop scans the name."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (k < rest.Length && IsSpace(rest[k])) k++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `k++` in ParseStartTag's `while (k < rest.Length && IsSpace(rest[k])) k++;` after the attribute name (before '='): k never advances, so any attribute with a space between its name and '=' spins forever. The unmutated loop skips the space."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (k < rest.Length && IsSpace(rest[k])) k++;",
+  "occurrence": 2,
+  "reason": "Statement mutation of `k++` in ParseStartTag's `while (k < rest.Length && IsSpace(rest[k])) k++;` after the '=' (before the quote): k never advances, so any attribute with a space between '=' and the quote spins forever. The unmutated loop skips the space."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestNvidia.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 4,
+  "reason": "Block removal of the body of `while (o < recEnd)` in parseNvidiaSpdmEvidence's measurement-block loop: `o = bodyStart + size` is the only advance, so for any evidence with a non-empty measurement record (recLen > 0) the loop spins forever (no allocation)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestNvidia.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 5,
+  "reason": "Block removal of the body of `while (o < opaqueEnd)` in parseNvidiaSpdmEvidence's opaque TLV loop: `o += 4` and `o += l` are the only advances, so for any evidence with non-empty opaque data the loop spins forever (no allocation)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Mesh.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 25,
+  "reason": "Block removal of the `if (first == 0) { ... }` body in Mesh.Consistency: the old-size-zero proofs no longer return, and flow reaches `long fn = first - 1` = -1, where `while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }` shifts an arithmetic -1 to -1 again forever. It happens for first == 0, second > 0 with a valid 32-byte oldRoot (the empty-tree root, which the unmutated code requires), so the loop spins forever. The unmutated code returns from this branch."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Mesh.cs",
+  "mutant": "Equality mutation: (fn & 1) != 1",
+  "line": "while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Equality mutation `(fn & 1) != 1` in Mesh.Consistency's strip loop `while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }`: when fn == 0 (oldSize 1) `(0 & 1) != 1` is true and shifting leaves fn at 0, so the loop spins forever. The unmutated condition is false for fn = 0."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Mesh.cs",
+  "mutant": "Bitwise mutation: fn | 1",
+  "line": "while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Bitwise mutation `fn | 1` for `fn & 1` in Mesh.Consistency's strip loop `while ((fn & 1) == 1) { ... }`: `(fn | 1) == 1` holds for fn = 0 and fn = 1, and the body shifts fn to 0, where it still holds, so for oldSize 1 or 2 the loop spins forever. The unmutated condition is false for fn = 0."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Mesh.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "while ((fn & 1) == 1) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Block removal of `{ fn >>= 1; sn >>= 1; }` in Mesh.Consistency's strip loop `while ((fn & 1) == 1)`: with an odd fn (oldSize even) the empty body never changes the condition, so the loop spins forever. The unmutated body shifts fn until it is even."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Mesh.cs",
+  "mutant": "Logical mutation: (fn & 1) == 0 || fn != 0",
+  "line": "while ((fn & 1) == 0 && fn != 0) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Logical mutation `(fn & 1) == 0 || fn != 0` for `&&` in Mesh.Consistency's loop `while ((fn & 1) == 0 && fn != 0)`: an even fn satisfies the first operand and an odd fn the second, so the condition is true for every fn including 0, and the loop spins forever once entered. The unmutated `&&` stops at the first odd value or 0."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Mesh.cs",
+  "mutant": "Negate expression: !((fn & 1) == 0 && fn != 0)",
+  "line": "while ((fn & 1) == 0 && fn != 0) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Negate expression `!((fn & 1) == 0 && fn != 0)` in Mesh.Consistency's shift loop (entered with fn odd or fn == sn): the loop now runs while fn is odd or 0, so for an fn of all ones in binary (1, 3, 7, ...) it shifts to 0, where the negated condition is true, and spins forever. The unmutated loop stops at the first even non-zero fn."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Ext/Mesh.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "while ((fn & 1) == 0 && fn != 0) { fn >>= 1; sn >>= 1; }",
+  "occurrence": 1,
+  "reason": "Block removal of `{ fn >>= 1; sn >>= 1; }` in Mesh.Consistency's shift loop `while ((fn & 1) == 0 && fn != 0)`: entered with an even non-zero fn (reached when fn == sn is even), the empty body never changes the condition, so the loop spins forever. The unmutated body shifts fn to an odd value."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/ActionsRegistry.cs",
+  "mutant": "Logical mutation: step < MaxEvolutionSteps && frontier.Count > 0 || !parent.ContainsKey(presented)",
+  "line": "for (int step = 0; step < MaxEvolutionSteps && frontier.Count > 0 && !parent.ContainsKey(presented); step++)",
+  "occurrence": 1,
+  "reason": "Logical mutation `step < MaxEvolutionSteps && frontier.Count > 0 || !parent.ContainsKey(presented)` for `&&` in ActionsRegistry's Search: `(A && B) || C` stays true while the presented digest is not in parent, so when no evolution record chains to it (the plain `def_changed` deny, where the frontier empties) neither the step cap nor the empty frontier stops the loop, step only counts up, and the loop spins forever. The unmutated `&&` stops at the cap, an empty frontier or the hit."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/ActionsRegistry.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "for (var cur = presented; cur != pinned;) { var p = all[cur]; if (p.Blocked != null) first = p.Blocked; cur = p.From; }",
+  "occurrence": 1,
+  "reason": "Block removal of the body `{ var p = all[cur]; ...; cur = p.From; }` of the walk `for (var cur = presented; cur != pinned;)` in ActionsRegistry's widening report: cur is only moved inside the body, so when the presented digest is reachable only through a blocked edge the walk starts at presented, never moves, and spins forever. The unmutated body steps to the parent each pass."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestNvidiaCollateral.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < b.Length - 1 && b[i] == 0) i++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `i++` in AttestNvidiaCollateral.StripLeading0's `while (i < b.Length - 1 && b[i] == 0) i++;`: i never advances, so any byte array of 2 or more bytes that starts with a zero byte makes the loop spin forever. The unmutated loop skips the leading zeros."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestIntelCollateral.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 20,
+  "reason": "Block removal empties the body of `while (e < n.End)` in the CRL revoked-entry walk, so e never advances: for any CRL with at least one revoked entry the loop condition stays true forever and nothing in the body runs. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestIntelCollateral.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < s.Length && AttestUtil.IsJsSpace(s[i])) i++;",
+  "occurrence": 1,
+  "reason": "Statement removal of the `i++` body of `while (i < s.Length && IsJsSpace(s[i])) i++;` in SkipJsSpace leaves `while (cond);`: on any JSON text with whitespace at the skipped position the condition never changes and the loop never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestIntelCollateral.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "if (ch == '\\\\') i++;",
+  "occurrence": 1,
+  "reason": "`i++` becomes `i--` at the escape step `if (ch == '\\\\') i++;` inside a string of RawJsonObject: on a backslash the body moves i back one and the for-loop's own `i++` forwards it again, so i stays on the same backslash and the loop never ends for any string holding an escape. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "if (c == ' ' || c == '\\t' || c == '\\n' || c == '\\r') i++; else break;",
+  "occurrence": 1,
+  "reason": "In Ws `if (c is a JSON space) i++; else break;` each Statement mutation leaves a branch empty: with `i++` removed a space is never consumed, with `break` removed a non-space is never left, so i stays and the enclosing `while (i < t.Length)` never ends for any text that reaches Ws with a space (first mutant) or a non-space (second). The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone.",
+  "multiplicity": 2
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "else if (t[i] >= '1' && t[i] <= '9') { while (i < t.Length && char.IsAsciiDigit(t[i])) i++; }",
+  "occurrence": 1,
+  "reason": "In the JSON number reader `else if (digit 1-9) { while (i < t.Length && char.IsAsciiDigit(t[i])) i++; }` the Statement mutation turns the body `i++` into `;`, so `while (cond);` never ends for any number starting with a digit 1-9. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < t.Length && char.IsAsciiDigit(t[i])) i++;",
+  "occurrence": 1,
+  "reason": "In the JSON number reader's fraction digits `while (i < t.Length && char.IsAsciiDigit(t[i])) i++;` the Statement mutation turns `i++` into `;`: `while (cond);` never ends for any fraction with a digit. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < t.Length && char.IsAsciiDigit(t[i])) i++;",
+  "occurrence": 2,
+  "reason": "In the JSON number reader's exponent digits `while (i < t.Length && char.IsAsciiDigit(t[i])) i++;` the Statement mutation turns `i++` into `;`: `while (cond);` never ends for any exponent with a digit. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "if (char.IsHighSurrogate(c)) { if (i + 1 < s.Length && char.IsLowSurrogate(s[i + 1])) i++; else return true; }",
+  "occurrence": 1,
+  "reason": "In HasLoneSurrogate the `i++` that skips the low half of a valid surrogate pair becomes `i--`: the for-loop's own `i++` returns i to the high surrogate, which is read again, so for any string holding a valid surrogate pair the loop never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "else if (raw[i] >= '1' && raw[i] <= '9') { while (i < raw.Length && char.IsAsciiDigit(raw[i])) i++; }",
+  "occurrence": 1,
+  "reason": "In NumberError `else if (raw[i] is 1-9) { while (i < raw.Length && char.IsAsciiDigit(raw[i])) i++; }` the Statement mutation turns the body `i++` into `;`: `while (cond);` never ends for any integer part starting with a digit 1-9. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < raw.Length && char.IsAsciiDigit(raw[i])) i++;",
+  "occurrence": 1,
+  "reason": "In NumberError's fraction digits `while (i < raw.Length && char.IsAsciiDigit(raw[i])) i++;` the Statement mutation turns `i++` into `;`: `while (cond);` never ends for any fraction with a digit. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Equality mutation: k * 2 <= n",
+  "line": "internal static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }",
+  "occurrence": 1,
+  "reason": "Split with `k * 2 <= n` returns n itself when n is a power of two (n = 2: k goes 1 to 2 and 2 * 2 <= 2 stops it), so Build(hs) with a two-element list calls Build(hs.GetRange(0, 2)) on an equal list without end; each level allocates a new list until the 3 GiB heap cap throws OutOfMemoryException. The unmutated Split(2) is 1 and the recursion ends at one element; the unmutated suite passes under the same cap in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "MultiplyAssignmentExpression to DivideAssignmentExpression mutation: k /= 2",
+  "line": "internal static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }",
+  "occurrence": 1,
+  "reason": "`k *= 2` becomes `k /= 2` in Split's `while (k * 2 < n)`: k = 1 goes to 0 and stays 0, so `0 < n` holds forever for any n above 2. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "if (idx < k) { o.Add('R'); n = k; }",
+  "occurrence": 1,
+  "reason": "Block removal empties the `if (idx < k) { o.Add('R'); n = k; }` branch of the Merkle path builder: n is not reduced when idx < k, so the enclosing `while (n > 1)` never ends for any index in the left part (every size above 1 has such an index, e.g. idx 0). The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "else { o.Add('L'); idx -= k; n -= k; }",
+  "occurrence": 1,
+  "reason": "Block removal empties the `else { o.Add('L'); idx -= k; n -= k; }` branch of the Merkle path builder: n is not reduced when idx >= k, so the enclosing `while (n > 1)` never ends for any index in the right part (every size above 1 has such an index, e.g. the last one). The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 50,
+  "reason": "Block removal empties the body of `while (sp > 0)` in the NFA closure walk: sp is 1 on entry (stack[sp++] = pc0) and nothing pops it, so the loop never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 56,
+  "reason": "Block removal empties the body of `while (i < src.Length)` in IsSafeSource: i never advances, so for any non-empty source the loop never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: j--",
+  "line": "for (; j < src.Length && src[j] != ']'; j++) if (src[j] == '\\\\') j++;",
+  "occurrence": 1,
+  "reason": "In the character-class scan `for (; j < src.Length && src[j] != ']'; j++) if (src[j] == '\\\\') j++;` one `j++` becomes `j--` (the loop step or the escape step, the report cannot tell the two apart). For a class whose first member is a backslash (`[\\d]`, `[\\w.]`), j sits on that backslash: with the loop step mutated the body moves j to the next character and the step moves it back to the backslash; with the escape step mutated the body moves j back and the loop step forward again. Either way j returns to the same backslash and the loop never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone.",
+  "multiplicity": 2
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 60,
+  "reason": "Block removal empties the `{ if (!(i + 2 < src.Length && src[i + 2] == ':')) return false; i += 3; }` branch for `(?`: i is not advanced (the else branch `i += 1` is not taken either) and the code after it runs `stack.Add(new Frame())` and continues at the same i, so every pass adds a Frame to the list without end for any source holding `(?:`, until the 3 GiB heap cap throws OutOfMemoryException. The unmutated branch advances i by 3 and the unmutated suite passes under the same cap in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "i++;",
+  "occurrence": 12,
+  "reason": "The final `i++` of IsSafeSource's loop becomes `i--` after an ordinary character. For a source holding an escape directly followed by an ordinary character (`\\.com`): the escape at p-2 sets i = p, the ordinary character at p gives i = p-1, the escape's second character is itself ordinary there and gives i = p-2, which reads the escape again and sets i = p: the position cycles and the loop never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "i++;",
+  "occurrence": 12,
+  "reason": "Statement removal of the final `i++` in IsSafeSource's loop leaves i unchanged after any ordinary character, so the next pass reads the same character again and the loop never ends for any source with an ordinary character. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Actions.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 45,
+  "reason": "Block removal empties the body of `while (stack.Count > 0)` in Closure: nothing is popped, so for any non-empty id list the loop never ends. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Arithmetic mutation: k / 2",
+  "line": "internal static long Split(long n) { long k = 1; while (k * 2 < n) k *= 2; return k; }",
+  "occurrence": 1,
+  "reason": "`k * 2 < n` becomes `k / 2 < n` in Split: the loop then stops at the smallest power of two k with k / 2 >= n, so Split(n) >= 2n > n. In the Merkle path builder `while (n > 1) { long k = Split(n); if (idx < k) { o.Add('R'); n = k; } ... }` every index below k (all of them) sets n = k, a larger size than before, so n never reaches 1 and the loop (growing the list o) never ends for any size above 1. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Equality mutation: n >= 1",
+  "line": "while (n > 1)",
+  "occurrence": 1,
+  "reason": "`while (n > 1)` becomes `while (n >= 1)` in the Merkle path builder: at n == 1, Split(1) is 1 and for index 0 `idx < k` holds, so it adds 'R' and sets n = k = 1 again, forever (the list o grows). Every path to index 0 reaches n == 1. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Predicates.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "i++;",
+  "occurrence": 1,
+  "reason": "In ParseGlob the `i++` that skips the escaped character after a backslash becomes `i--`: the for-loop's own `i++` returns i to the backslash, which is read again and adds another Lit entry to output, without end (until the 3 GiB heap cap throws OutOfMemoryException), for any glob holding a backslash escape. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 4,
+  "reason": "Block removal empties the body of `while (lo <= hi)` in CharSet.Has: lo and hi never change, so for any set with at least one range the loop never ends. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Arithmetic mutation: mid + 1",
+  "line": "if (c < r[0]) hi = mid - 1;",
+  "occurrence": 1,
+  "reason": "`hi = mid - 1` becomes `hi = mid + 1` in CharSet.Has: for a character below the range at mid, hi moves up (to mid + 1) instead of down, so with one range (lo = 0, hi = 0, mid = 0) it is 1 and mid is 0 again, forever: the loop never ends for any character below the first range. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "else { inside = true; break; }",
+  "occurrence": 1,
+  "reason": "Block removal empties `else { inside = true; break; }` in CharSet.Has: for a character inside the range at mid neither lo nor hi changes, so the loop never ends. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "else { inside = true; break; }",
+  "occurrence": 1,
+  "reason": "Two mutants share this key: removing `inside = true;` (the loop still ends, with the wrong answer, so a test fails on its assertion: plainly killed) and removing `break;` (a character inside the range at mid changes neither lo nor hi, so the loop never ends). The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "while (At(i) == '|') { i++; items.Add(Cat()); }",
+  "occurrence": 1,
+  "reason": "Block removal empties the body of `while (At(i) == '|') { i++; items.Add(Cat()); }` in Alt: i never advances past the '|', so for any pattern with an alternation the loop never ends. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "while (At(i) == '|') { i++; items.Add(Cat()); }",
+  "occurrence": 1,
+  "reason": "`i++` becomes `i--` in Alt's alternation loop: after a '|' at index p >= 1, i moves to p - 1, Cat() parses the character before the '|' and stops at the same '|', and the loop runs again, adding an item each time without end (OutOfMemoryException under the heap cap), for any alternation with a character before the '|'. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < s.Length && s[i] != '|' && s[i] != ')') items.Add(Quantified());",
+  "occurrence": 1,
+  "reason": "Statement removal empties the body of `while (i < s.Length && s[i] != '|' && s[i] != ')') items.Add(Quantified());` in Cat: i never advances, so for any pattern with a character that is not '|' or ')' the loop never ends. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "if (c == '*') { min = 0; max = double.PositiveInfinity; i++; }",
+  "occurrence": 1,
+  "reason": "`i++` becomes `i--` after a '*' quantifier in Quantified: i returns to the atom, which Cat parses again and finds the '*' again, adding an item each time without end, for any pattern with '*'. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "else if (c == '+') { min = 1; max = double.PositiveInfinity; i++; }",
+  "occurrence": 1,
+  "reason": "`i++` becomes `i--` after a '+' quantifier in Quantified: i returns to the atom, which Cat parses again and finds the '+' again, adding an item each time without end, for any pattern with '+'. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "i++;",
+  "occurrence": 1,
+  "reason": "Statement removal of the `i++` after '(' in Atom: i stays on the '(', so Alt() -> Cat() -> Quantified() -> Atom() reads the same '(' again and recurses without end: a stack overflow, which .NET cannot catch and which ends the test host, for any pattern with a group. The unmutated Atom advances past the '(' and the unmutated suite passes under the same limits in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "case '.': i++; return SetNode(new CharSet(LineTerminators, true));",
+  "occurrence": 1,
+  "reason": "Statement removal of the `i++` in `case '.'` of Atom: i stays on the '.', Atom returns without consuming it and Cat adds an item and calls again, without end (OutOfMemoryException under the heap cap), for any pattern with '.'. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "case '$': i++; return new Node('$');",
+  "occurrence": 1,
+  "reason": "Statement removal of the `i++` in `case '$'` of Atom: i stays on the '$', Atom returns without consuming it and Cat adds an item and calls again, without end, for any pattern with '$'. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "i++;",
+  "occurrence": 3,
+  "reason": "`i++` becomes `i--` in the default case of Atom (an ordinary character): for a group around an ordinary character, `(a)`, the inner atom moves i back onto the '(' and the group is entered again from the start, recursing without end: a stack overflow, which .NET cannot catch and which ends the test host. The unmutated Atom consumes the character and the unmutated suite passes under the same limits in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/SafeRegex.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "i++;",
+  "occurrence": 3,
+  "reason": "Statement removal of the `i++` in the default case of Atom: the ordinary character is never consumed, so Cat adds an item for it and calls again without end, for any pattern with an ordinary character. The unmutated code terminates there and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run); no assertion can decide a loop or recursion that never ends, so the mutant is decided by the run limit (or, in a run where a test fails first on its own assertion, it is plainly killed)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformance.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "throw new InvalidOperationException(\"Open: \" + e.Message, e);",
+  "occurrence": 1,
+  "reason": "Statement removal of the `throw new InvalidOperationException(\"Open: \" + ...)` in OpenN's catch: when the first Open throws, OpenN returns the disposed, EMPTY handle list instead of throwing. ClaimConcurrent then evaluates `hs.Stores[i % hs.Stores.Count]` (a division by zero) inside the body of a raw background Thread started by Race, outside Claim's try: an exception in a raw thread is unhandled and ends the test host (a crash no test can catch). The unmutated OpenN throws before any thread starts and the unmutated suite passes under the same limits in every shard."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 27,
+  "reason": "Block removal empties the body of `while (i < t.Length)` in the JSON reader's whitespace skip (Ws): i never advances, so for any text with at least one character left the loop never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 30,
+  "reason": "Block removal empties the body of the `for (;;)` that reads object members in the JSON reader: after `{` and the empty-object check, any object with a member enters `for (;;) {}` which never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 32,
+  "reason": "Block removal empties the body of the `for (;;)` that reads array elements in the JSON reader: after `[` and the empty-array check, any non-empty array enters `for (;;) {}` which never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 34,
+  "reason": "Block removal empties the body of the `for (;;)` that reads a string's characters in the JSON reader: any string enters `for (;;) {}` which never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Pca.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 64,
+  "reason": "Block removal empties the body of `while (n > 1)` in the Merkle path builder: n never changes, so for any size above 1 the loop never ends. The unmutated loop ends and the unmutated suite passes under the same limits in every shard (checked in each shard before the mutants run). No assertion can decide a loop that never ends, so the mutant is decided by the run limit alone."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 15,
+  "reason": "Block removal of the body of `for (int i = 0; i < s.Length;)` in AttestXml.Decode: i advances only inside the body, so for any text with an '&' (the early return handles texts without one) the loop spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 19,
+  "reason": "Block removal of the body of the main `while (i < s.Length)` loop in AttestXml.Parse: i advances only inside the body, so for any non-empty document the loop spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 22,
+  "reason": "Block removal of the comment branch `<!-- ... -->` body in AttestXml.Parse: the branch no longer moves i (`i += 4 + j + 3` was inside), and it is chosen again on the same input on every pass, so any document with a comment spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 23,
+  "reason": "Block removal of the processing-instruction branch `<? ... ?>` body in AttestXml.Parse: the branch no longer moves i (`i += j + 2` was inside), so any document with a processing instruction (the XML declaration is one) spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 24,
+  "reason": "Block removal of the CDATA branch body in AttestXml.Parse: the branch no longer moves i (`i += j + 3` was inside), so any document with a CDATA section spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 25,
+  "reason": "Block removal of the DOCTYPE branch body in AttestXml.Parse: the branch no longer moves i (`i += j + 1` was inside), so any document with a DOCTYPE spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 27,
+  "reason": "Block removal of the end-tag branch `</...>` body in AttestXml.Parse: the branch no longer moves i (`i += j + 1` was inside) and does not pop the element, so any document with an end tag spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestXml.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 28,
+  "reason": "Block removal of the start-tag branch body (the final `else`) in AttestXml.Parse: the branch no longer calls ParseStartTag or moves i (`i += n` was inside), so any document with an element spins forever."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestIntel.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 21,
+  "reason": "Block removal of the body of `while (p < seq.End)` in ExtractPckFmspcAndTcb: `p = pair.End` and the `idx++ ... if (idx > 64) break` guard are both in the body, so p never advances and the guard never counts, and the loop spins forever on any non-empty TCB sequence."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestIntel.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 25,
+  "reason": "Block removal of the body of `while (cur != null && !seen.Contains(K(cur.RawSubject)))` in VerifyPckChain: the body holds the `ordered.Add`, the `seen.Add` and the move to the issuer, so cur never changes and seen stays empty, the condition stays true, and the loop spins forever on any chain (cur starts as the leaf, never null)."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestNvidiaCollateral.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 42,
+  "reason": "Block removal of the body of `for (int p = n.Start; p < n.End;)` in AttestNvidiaCollateral.Kids: `p = k.End` is the only advance, so p stays at n.Start and the loop spins forever on any node with content."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/Attest/AttestCert.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "while (i < v.Length && v[i] == 0) i++;",
+  "occurrence": 1,
+  "reason": "Statement mutation of `i++` in AttestCerts.BitLength's `while (i < v.Length && v[i] == 0) i++;`: i never advances, so any integer whose first octet is zero (a modulus or exponent with a leading 00) makes the loop spin forever. The unmutated loop skips the zeros."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/ProhibitionPlane.cs",
+  "mutant": "Block removal mutation: {}",
+  "line": "{",
+  "occurrence": 34,
+  "reason": "Block removal of the body of `while (kept.Count > MaxLedger)` in AdvanceInner: the body (`kept.RemoveRange(0, 2); kept.Insert(...)`) is the only code that lowers kept.Count, so for the capped ledger that reaches the loop (MaxLedger + 1 entries) the condition stays true and the loop spins forever. The unmutated loop merges two entries per pass and ends."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/ProhibitionPlane.cs",
+  "mutant": "Statement mutation: ;",
+  "line": "kept.RemoveRange(0, 2);",
+  "occurrence": 1,
+  "reason": "Statement mutation of `kept.RemoveRange(0, 2)` inside `while (kept.Count > MaxLedger)`: each pass then only Inserts one merged entry at index 0, so kept.Count grows by one every pass and the loop never ends (and allocates without bound). The unmutated loop removes two and inserts one, shrinking the list by one per pass until it is MaxLedger."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformanceKv.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: i--",
+  "line": "for (int i = 0; i < n; i++) l.Add(open!() ?? throw new InvalidOperationException(\"Open returned null\"));",
+  "occurrence": 1,
+  "reason": "With `i--` the counter runs 0, -1, -2, ... so `i < n` stays true for any n >= 1 (until int underflow, far beyond memory) and each pass calls open and adds a handle to the list: the loop never ends and allocates without bound. The unmutated loop opens exactly n handles."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformanceKv.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: round--",
+  "line": "for (int round = 1; round <= rounds; round++)",
+  "occurrence": 2,
+  "reason": "With `round--` the round counter runs 1, 0, -1, ... so `round <= rounds` stays true forever. In KvCreateOnce each pass takes a new key (StoreConformance.Key adds a tick count and a running number), races its copies and checks the result, so against a store that passes the check every pass succeeds and the loop never returns; only a failing store returns (on the first pass). The unmutated loop ends after `rounds` passes."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformanceKv.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: round--",
+  "line": "for (int round = 1; round <= rounds; round++)",
+  "occurrence": 3,
+  "reason": "With `round--` the round counter runs 1, 0, -1, ... so `round <= rounds` stays true forever. In BudgetConcurrent each pass takes a new key (StoreConformance.Key adds a tick count and a running number), races its copies and checks the result, so against a store that passes the check every pass succeeds and the loop never returns; only a failing store returns (on the first pass). The unmutated loop ends after `rounds` passes."
+ },
+ {
+  "crate": "dotnet-pca",
+  "file": "AtlasPca/StoreConformanceKv.cs",
+  "mutant": "PostIncrementExpression to PostDecrementExpression mutation: round--",
+  "line": "for (int round = 1; round <= rounds; round++)",
+  "occurrence": 4,
+  "reason": "With `round--` the round counter runs 1, 0, -1, ... so `round <= rounds` stays true forever. In PinConcurrent each pass takes a new key (StoreConformance.Key adds a tick count and a running number), races its copies and checks the result, so against a store that passes the check every pass succeeds and the loop never returns; only a failing store returns (on the first pass). The unmutated loop ends after `rounds` passes."
+ }
+]

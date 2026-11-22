@@ -1,0 +1,45 @@
+name: Groth16 (libpcazk)
+
+# AtlasPca.Zk: the Groth16 pairing check and prover for snarkjs artifacts (BN254 and BLS12-381) through P/Invoke over libpcazk (arkworks behind a small
+# C library, built here from the flagship's crate). Replays the pairing cases of the shared reference corpus: the default mode must agree with the
+# reference verifier case for case, the strict mode everywhere except the cases the reference accepts by not reading parts of the key. The same job
+# registers the library as the engine of the core's zk compliance checks and replays every corpus case that ends in a pairing check through them
+# (proof verification, the four SNARK backends, the verifier hook); the core suite replays those cases under recorded verdicts without the library.
+on:
+  push:
+    branches: [main, 'ci/**']
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  zk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus and the Groth16 crate from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: libpcazk (cargo build --features capi)
+        run: |
+          echo "ATLAS_PCA_LIBPCAZK=$(.github/scripts/build-libpcazk.sh "$RUNNER_TEMP/pcazk" "$RUNNER_TEMP/mono/packages/pca-zk/crate" | tail -1)/libpcazk.so" >> "$GITHUB_ENV"
+          echo "ATLAS_PCA_LIBPCAZK_REQUIRED=1" >> "$GITHUB_ENV"
+      - name: Groth16 verification replay (both curves, default and strict mode; the library alone, then as the engine of the core's zk compliance checks)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          test -s AtlasPca.Corpus.Tests/test-data/ref-zk.json.gz
+          dotnet test AtlasPca.Zk.Tests/AtlasPca.Zk.Tests.csproj -c Release

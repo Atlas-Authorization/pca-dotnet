@@ -14,19 +14,22 @@ public class SessRevocDifferentialTests
 {
     const string FailClosed = "(fail closed): ";
 
-    static readonly Lazy<D> Data = new(() =>
+    static readonly string DataText = LoadText();
+    static D Data => (D)Pca.ParseJson(DataText)!;
+
+    static string LoadText()
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
         {
             var f = Path.Combine(d, "test-data", "k042-sessrevoc-cases.json");
             if (!File.Exists(f)) f = Path.Combine(d, "AtlasPca.Corpus.Tests", "test-data", "k042-sessrevoc-cases.json");
-            if (File.Exists(f)) return (D)Pca.ParseJson(File.ReadAllText(f, new UTF8Encoding(false)))!;
+            if (File.Exists(f)) return File.ReadAllText(f, new UTF8Encoding(false));
         }
         throw new FileNotFoundException("test-data/k042-sessrevoc-cases.json");
-    });
+    }
 
-    static List<D> List(string kind) => ((L)Data.Value[kind]!).Cast<D>().ToList();
+    static List<D> List(string kind) => ((L)Data[kind]!).Cast<D>().ToList();
     static object? Json(object? text) => IntentJs.Normalize(Pca.ParseJson((string)text!));
     static double Dbl(object? n) => IntentJs.NumOf(n)!.Value;
     static void Same(string name, object? want, string? got)

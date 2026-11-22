@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Secure multi-party computation for PCA: SPDZ over a prime field, OT (Ed25519 and ML-KEM-768 base OTs, KOS extension, MASCOT) and the mutual-TLS network driver.
+       Group arithmetic is libsodium (through AtlasPca), SHAKE256 is System.Security.Cryptography (BouncyCastle where the platform lacks it), AES-ECB is System.Security.Cryptography,
+       ML-KEM-768 is BouncyCastle (seeded keygen and deterministic encapsulation). The post-quantum endemic base OT lives in AtlasPca.MpcLweOt. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AtlasPca.Mpc</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <Version>0.5.0</Version>
+    <Description>Secure multi-party computation for PCA: SPDZ, oblivious transfer, MASCOT.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+  </ItemGroup>
+</Project>

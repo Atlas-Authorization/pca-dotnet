@@ -14,7 +14,7 @@ public static class IntentClassifier
     public const int MaxClassifierLabels = 32;
 
     /// <summary>The rule-18 verdict: <c>Classes</c> maps each classifier id to its quorum label.</summary>
-    public sealed record ClassResult(bool Ok, string? Reason, D? Classes)
+    public sealed record ClassResult(bool Ok, string? Reason, D? Classes, D? Votes = null)
     {
         internal static ClassResult Fail(string reason) => new(false, "classes: " + reason, null);
     }
@@ -131,7 +131,9 @@ public static class IntentClassifier
                 if (winners.Count > 1) return ClassResult.Fail($"classifier '{id}': ambiguous, {winners.Count} labels reach the quorum");
                 classes[id] = winners[0];
             }
-            return new ClassResult(true, null, classes);
+            var voteOut = new D();
+            foreach (var (vid, vt) in votes) { var r = new D(); foreach (var (lab, n) in vt) r[lab] = IntentJs.OfLong(n); voteOut[vid] = r; }
+            return new ClassResult(true, null, classes, voteOut);
         }
         catch (Exception e) { return ClassResult.Fail("evaluation error (fail closed): " + e.GetType().Name); }
     }

@@ -16,7 +16,10 @@ public class MapArtClsDifferentialTests
 {
     const string Outside = "the action's value lies outside the committed map's dimension";
 
-    static readonly Lazy<L> All = new(() =>
+    static readonly string AllText = LoadText();
+    static L All => (L)IntentJs.Normalize(Pca.ParseJson(AllText))!;
+
+    static string LoadText()
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
@@ -26,14 +29,14 @@ public class MapArtClsDifferentialTests
             if (!File.Exists(f)) continue;
             using var gz = new GZipStream(File.OpenRead(f), CompressionMode.Decompress);
             using var sr = new StreamReader(gz, new UTF8Encoding(false));
-            return (L)IntentJs.Normalize(Pca.ParseJson(sr.ReadToEnd()))!;
+            return sr.ReadToEnd();
         }
         throw new FileNotFoundException("test-data/k042-mapartcls.json.gz");
-    });
+    }
 
     static List<D> Of(string fn)
     {
-        var o = All.Value.Cast<D>().Where(c => (string)c["fn"]! == fn).ToList();
+        var o = All.Cast<D>().Where(c => (string)c["fn"]! == fn).ToList();
         Assert.NotEmpty(o);
         return o;
     }

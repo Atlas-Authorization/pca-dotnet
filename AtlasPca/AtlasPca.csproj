@@ -4,12 +4,50 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>AtlasPca</RootNamespace>
-    <Version>0.4.1</Version>
+    <Version>0.5.0</Version>
+    <!-- Maturity tier of the package: stable | production | experimental (the PCA maturity tiers page defines them). Package tag + assembly metadata. -->
+    <Maturity>stable</Maturity>
+    <PackageTags>pca;proof-carrying-authority;maturity-stable</PackageTags>
+    <Description>Atlas Proof-Carrying Authority for .NET: the verifier and the agent side (grants, delegation, signed actions).</Description>
   </PropertyGroup>
   <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>maturity</_Parameter1>
+      <_Parameter2>$(Maturity)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="AtlasPca.Corpus.Tests" />
+    <InternalsVisibleTo Include="AtlasPca.AspNetCore.Tests" />
+    <InternalsVisibleTo Include="AtlasPca.Mpc" />
+    <InternalsVisibleTo Include="AtlasPca.Mpc.Tests" />
+    <InternalsVisibleTo Include="AtlasPca.MpcLweOt.Tests" />
+    <InternalsVisibleTo Include="AtlasPca.Ada.Tests" />
+    <InternalsVisibleTo Include="AtlasPca.Pairing" />
+    <InternalsVisibleTo Include="AtlasPca.Pairing.Tests" />
+    <InternalsVisibleTo Include="AtlasPca.Zk.Tests" />
+  </ItemGroup>
+  <!-- libatlasada (Ada IDNA shim: the Jose/Oauth URL hosts and CIBA words need it) and libatlas_less (the LESS signature suites) ship per RID in runtimes/<rid>/native, built by the native-package workflow.
+       Set PackNativeRequired=true (the release job does) to make a pack without all five libraries fail. -->
+  <ItemGroup>
+    <None Include="runtimes/**/native/*" Pack="true" PackagePath="%(Identity)" Visible="false" />
+  </ItemGroup>
+  <Target Name="RequireAdaNatives" BeforeTargets="_GetPackageFiles" Condition="'$(PackNativeRequired)' == 'true'">
+    <ItemGroup>
+      <_AdaNative Include="runtimes/linux-x64/native/libatlasada.so;runtimes/linux-arm64/native/libatlasada.so;runtimes/osx-x64/native/libatlasada.dylib;runtimes/osx-arm64/native/libatlasada.dylib;runtimes/win-x64/native/atlasada.dll;runtimes/linux-x64/native/libatlas_less.so;runtimes/linux-arm64/native/libatlas_less.so;runtimes/osx-x64/native/libatlas_less.dylib;runtimes/osx-arm64/native/libatlas_less.dylib;runtimes/win-x64/native/atlas_less.dll" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_AdaNative.Identity)')" Text="libatlasada missing from the package inputs: %(_AdaNative.Identity)" />
+  </Target>
+  <!-- The committed Policy VM verification keys (BN254, BLS12-381) and the circuit versions, the reference package's own files: ZkCompliance reads them. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Ext/ZkCircuits/*.json" LogicalName="AtlasPca.ZkCircuits.%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="BouncyCastle.Cryptography" Version="2.6.1" />
+    <!-- Official libsodium native package (libsodium author): all group arithmetic (Ed25519, ristretto255) is P/Invoked into it. Pinned exact. -->
+    <PackageReference Include="libsodium" Version="[1.0.20.1]" />
+    <!-- YAML 1.2 syntax layer of the authoring-file loader (only its parser events are used) -->
+    <PackageReference Include="YamlDotNet" Version="16.1.3" />
+    <PackageReference Include="NodaTime" Version="3.1.11" />
   </ItemGroup>
 </Project>
