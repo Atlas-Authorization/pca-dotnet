@@ -1,9 +1,10 @@
 name: Mutation
 
 # Mutation testing of the verifier (AtlasPca/) with Stryker.NET (AtlasPca.Corpus.Tests/stryker-config.json: mutation level
-# Complete, oracle = the corpus test project), split into 12 shards over every .cs file of AtlasPca/: Pca.cs in 3 line spans
-# cut at member declarations, the other 17 files grouped by size (the plan, the per-member directive fencing and the check
-# that the plan lists every file are in scripts/stryker-spans.py). Each shard counts and lists only its IN-SCOPE mutants
+# Complete, oracle = the corpus test project plus the Authorize / executor / middleware test project), split into 725 shards (702 core + 23 opt-in module shards, see below; every shard is sized to finish in about 40 minutes) over every .cs file of AtlasPca/ (Ext/ and Attest/ included) and of the middleware
+# AtlasPca.AspNetCore/ (its own Stryker project, oracle AtlasPca.AspNetCore.Tests): the big files in line spans
+# cut at member declarations, the rest grouped by cost (the plan, the per-member directive fencing and the check
+# that the plan partitions every file are in scripts/stryker-spans.py). Each shard counts and lists only its IN-SCOPE mutants
 # (Stryker compiles, and reports CompileError for, the mutants of every file in every shard), and every in-scope
 # CompileError is then built and tested ALONE (scripts/stryker-isolate.py): Stryker rolls back whole groups of mutants
 # around one that breaks the build, so a compilable mutant can hide behind it untested. The merge job checks the survivors
@@ -30,7 +31,7 @@ on:
         type: boolean
         default: false
   push:
-    branches: ['ci/**']
+    branches: ['ci/**', '!ci/build-**']
 
 permissions:
   contents: read
@@ -41,21 +42,53 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: ${{ github.event_name == 'push' }}
 
+# The Windows-only code (OwnerOnly.cs, DurableState.cs, FileMeshWitnessStore.cs) is also mutated on windows-latest (winshard job, reports winshard-<n>.json, outside SHARDS).
+# Shards 83..88 are the opt-in module projects (the module-shard job): Pairing (83 ABE, 84 BBS, 85 aggregate signatures + curve),
+# Fhe (86), MpcLweOt (87), Fndsa (88) and Zk (222, Groth16 over libpcazk), each its own Stryker project whose oracle is the module's own test project, run with the
+# same native libraries as the module's replay workflow (blst, node-seal corpus, liblweot, libfndsa). They report as shard-<k>.json
+# of the same crate (files named AtlasPca.<Module>/...), so the merge, the ledger and the run-error gate cover them like the core.
+# Actions.cs (action kit) is mutated with the other AtlasPca/*.cs files; ActionsVectorTests (shared vectors, flagship layout) is part of the oracle project.
 env:
   CRATE: dotnet-pca
-  SHARDS: '12'
+  SHARDS: '725'
   DOTNET_CLI_TELEMETRY_OPTOUT: '1'
   DOTNET_NOLOGO: '1'
 
 jobs:
-  shard:
-    name: shard ${{ matrix.shard }}/12
+  reuse:
+    name: reuse check
     runs-on: ubuntu-latest
-    timeout-minutes: 340
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.reuse.outputs.skip }}
+      hash: ${{ steps.reuse.outputs.hash }}
+      source: ${{ steps.reuse.outputs.source }}
+    steps:
+      - uses: actions/checkout@v4
+      # input-hash reuse (ci-reuse.mjs): when an earlier run recorded the same input hash, every other job of this run is skipped.
+      # continue-on-error: a failing check can only mean "no reuse"; FORCE_FULL / force_full / [force-full] bypass it.
+      - id: reuse
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE_FULL: ${{ inputs.force_full || inputs.full || vars.FORCE_FULL == '1' || contains(github.event.head_commit.message, '[force-full]') }}
+          GATE_FULL: ${{ inputs.full || (startsWith(github.ref_name, 'ci/') && endsWith(github.ref_name, '-rc') || startsWith(github.ref_name, 'ci/gate-')) || contains(github.event.head_commit.message, '[force-full]') }}
+          PARTIAL: ${{ false }}
+          EXTRA: ''
+        run: node .github/scripts/ci-reuse.mjs check --workflow=mutation --self=.github/workflows/mutation.yml --external=flagship --extra="$EXTRA"
+  # every native library the shards need, built ONCE here and handed to each shard as an artifact (the 82+ core shards and the
+  # module shards used to build libatlas_less, blst, liblweot, libfndsa and the node-seal corpus again each): env.txt maps each
+  # variable to a path under @N@, which a shard replaces with where it downloaded the artifact
+  natives:
+    if: ${{ needs.reuse.outputs.skip != 'true' }}
+    needs: reuse
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      BLST_TAG: v0.3.16
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -64,12 +97,89 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Flagship tooling + source layout (+ libatlas_less -> ATLAS_PCA_LIBLESS, so the LESS branches are tested)
+      - name: Flagship tooling + source layout (+ libatlas_less -> ATLAS_PCA_LIBLESS)
         env:
           LESS: '1'
         run: .github/scripts/mutation-layout.sh "$CRATE"
+      - name: Collect libatlas_less and the fake LESS libraries
+        run: |
+          mkdir -p natives/less
+          cp "$ATLAS_PCA_LIBLESS" natives/less/
+          bash "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data/fake-less/build.sh" "$GITHUB_WORKSPACE/natives/fakeless"
+          { echo "ATLAS_PCA_LIBLESS=@N@/less/$(basename "$ATLAS_PCA_LIBLESS")"; echo "ATLAS_PCA_FAKELESS_DIR=@N@/fakeless"; } >> natives/env.txt
+      - name: blst + GT shim (pairing)
+        working-directory: ${{ env.MONO }}/sdks/dotnet-pca
+        run: |
+          git clone --quiet --depth 1 --branch "$BLST_TAG" https://github.com/supranational/blst "$RUNNER_TEMP/blst"
+          mkdir -p AtlasPca.Pairing.Tests/native
+          AtlasPca.Pairing/Native/build.sh "$RUNNER_TEMP/blst" AtlasPca.Pairing.Tests/native
+          mkdir -p "$GITHUB_WORKSPACE/natives/pairing-native"
+          cp -R AtlasPca.Pairing.Tests/native/. "$GITHUB_WORKSPACE/natives/pairing-native/"
+          # build.sh also copies the official C# binding next to the project (git-ignored): the pairing shards compile against it
+          mkdir -p "$GITHUB_WORKSPACE/natives/pairing-blst"
+          cp AtlasPca.Pairing/Blst/blst.cs "$GITHUB_WORKSPACE/natives/pairing-blst/"
+      - name: node-seal reference corpus (fhe)
+        run: |
+          .github/scripts/fhe-seal-corpus.sh "$GITHUB_WORKSPACE/natives/fhe-seal.json.gz" "$MONO/tools/pca-audit/oracles/fhe-seal.mts"
+          echo "PCA_FHE_SEAL_CORPUS=@N@/fhe-seal.json.gz" >> natives/env.txt
+      - name: liblweot (lwe-ot)
+        run: |
+          .github/scripts/build-liblweot.sh "$GITHUB_WORKSPACE/natives/lweot" "$MONO/packages/pca-mpc-lwe-ot-wasm/crate" > /dev/null
+          echo "ATLAS_LWEOT_LIB=@N@/lweot/liblweot.so" >> natives/env.txt
+      - name: libfndsa (fndsa)
+        run: |
+          d="$(.github/scripts/build-libfndsa.sh "$RUNNER_TEMP/fndsa" "$MONO/packages/pca-fndsa-wasm/crate" | tail -1)"
+          mkdir -p natives/fndsa; cp -R "$d/." natives/fndsa/
+          { echo "ATLAS_PCA_LIBFNDSA=@N@/fndsa/libfndsa.so"; echo "ATLAS_PCA_LIBFNDSA_REQUIRED=1"; } >> natives/env.txt
+      - uses: dtolnay/rust-toolchain@stable
+      - name: libpcazk (zk)
+        run: |
+          d="$(.github/scripts/build-libpcazk.sh "$RUNNER_TEMP/pcazk" "$MONO/packages/pca-zk/crate" | tail -1)"
+          mkdir -p natives/pcazk; cp -R "$d/." natives/pcazk/
+          { echo "ATLAS_PCA_LIBPCAZK=@N@/pcazk/libpcazk.so"; echo "ATLAS_PCA_LIBPCAZK_REQUIRED=1"; } >> natives/env.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives
+          path: natives/
+          retention-days: 2
+
+  shard:
+    if: ${{ needs.reuse.outputs.skip != 'true' }}
+    name: shard ${{ matrix.shard }}/725
+    needs: [reuse, natives]
+    runs-on: ubuntu-latest
+    # the one-by-one tests stop starting new mutants at 305 minutes (stryker-isolate.py --deadline): the shard always reports
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      # org rule: a mutation run holds at most 8 of the 60 runners, so CI is never stuck behind shards
+      max-parallel: 256 # Enterprise plan: 500 concurrent jobs org-wide; GitHub queues anything above that
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155, 156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257]
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Flagship tooling + source layout
+        run: .github/scripts/mutation-layout.sh "$CRATE"
+      - name: Native libraries (built once by the natives job; libatlas_less so the LESS branches are tested, the fake LESS libraries)
+        uses: actions/download-artifact@v4
+        with:
+          name: natives
+          path: ${{ runner.temp }}/natives
+      - name: Native library paths
+        run: sed "s#@N@#$RUNNER_TEMP/natives#g" "$RUNNER_TEMP/natives/env.txt" >> "$GITHUB_ENV"
+      - name: RSA DPoP oracle corpus (generated, never committed)
+        run: .github/scripts/dpop-rsa-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data/ref-dpop-rsa.json.gz"
+      - name: Secret-key oracle corpora (generated, never committed)
+        run: .github/scripts/gen-secret-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data" oprf:oprf core-frost-java:core-frost-java attest-eat:attest-eat frost-dkg:frost-dkg
       - name: Baseline (targeted mode)
-        if: ${{ !inputs.full }}
+        if: ${{ !(inputs.full || (startsWith(github.ref_name, 'ci/') && endsWith(github.ref_name, '-rc') || startsWith(github.ref_name, 'ci/gate-')) || contains(github.event.head_commit.message, '[force-full]')) }}
         env:
           GH_TOKEN: ${{ github.token }}
           BASELINE: ${{ inputs.baseline_run }}
@@ -89,19 +199,32 @@ jobs:
             fi
           done
           echo "::notice::shard $SHARD: no baseline found, full run (seeds the baseline for the next run)"
+      - name: Isolate selftest (process-group kill, watchdog kill is a RunError)
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/stryker-isolate.selftest.py"
       - name: Mutate
         working-directory: ${{ env.MONO }}/sdks/dotnet-pca/AtlasPca.Corpus.Tests
+        env:
+          # the oracle's RunErrorProbe logs every OutOfMemoryException (with its test) here: a mutant whose killing test only
+          # hit the heap cap is re-tested alone and reported as a RunError, never as a kill
+          PCA_RUNERR_LOG: ${{ runner.temp }}/runerr-stryker.log
         run: |
-          # pinned: the version the ledger was built with. Its project analysis cannot parse the compiler command line of
-          # the newer SDKs preinstalled on the runner, so this copy pins the .NET 8 SDK (global.json, CI copy only).
-          dotnet tool install -g dotnet-stryker --version 4.8.1
+          set -o pipefail   # a failed Stryker run must fail the step (the grep|tail pipe below masked its exit status)
+          # pinned. 4.8.1 (the version the ledger was built with) exhausts its 50 compile attempts on this project and aborts with
+          # "Internal error due to compile error": its rollback of a CS0165 (use of unassigned local, raised at the USE of a pattern
+          # variable, far from the mutant that hid its assignment) only peels the mutants around the use, one layer per attempt.
+          # 4.14.2 finds the mutant that erased the assignment (rollback: CS0165/CS0177/CS0161) and adds an aggressive mode before the
+          # last attempt; same mutators and report schema, still net8.0. The module shards below stay on 4.8.1 (they compile).
+          # Its project analysis cannot parse the compiler command line of the newer SDKs preinstalled on the runner, so this copy
+          # pins the .NET 8 SDK (global.json, CI copy only).
+          dotnet tool install -g dotnet-stryker --version 4.14.2
           SDK8="$(dotnet --list-sdks | awk '/^8\./ { v = $1 } END { print v }')"
           [ -n "$SDK8" ] || { echo "::error::no .NET 8 SDK"; exit 1; }
           (cd .. && dotnet new globaljson --sdk-version "$SDK8" --roll-forward disable --force >/dev/null)
           dotnet --version
-          dotnet test -c Release > "$RUNNER_TEMP/baseline.log" 2>&1 || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the oracle fails on the unmutated source"; exit 1; }
-          # a mutant that allocates without bound must die alone (killed), not exhaust the runner: 3 GiB GC heap per test
-          # host, set in the test project's runtimeconfig (CI copy only). Not as a DOTNET_GCHeapHardLimit environment
+          dotnet test -c Release > "$RUNNER_TEMP/baseline.log" 2>&1 && (cd ../AtlasPca.AspNetCore.Tests && dotnet test -c Release >> "$RUNNER_TEMP/baseline.log" 2>&1) || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the oracle fails on the unmutated source"; exit 1; }
+          [ ! -s "$PCA_RUNERR_LOG" ] || { cat "$PCA_RUNERR_LOG"; echo "::error::the unmutated source hits OutOfMemoryException"; exit 1; }
+          # a mutant that allocates without bound must die alone (a RunError, never a kill: see PCA_RUNERR_LOG), not exhaust
+          # the runner: 3 GiB GC heap per test host, set in the test project's runtimeconfig (CI copy only). Not as a DOTNET_GCHeapHardLimit environment
           # variable: that also caps Stryker's in-process compilation, and every Pca.cs mutant then "caused compile errors".
           python3 - <<'PY'
           s = open("AtlasPca.Corpus.Tests.csproj").read()
@@ -121,41 +244,689 @@ jobs:
             exit 0
           fi
           echo "mutate: ${M[*]}"
-          dotnet stryker --config-file stryker-config.json --concurrency 4 "${M[@]}" 2>&1 | grep -vE '^\s*$' | tail -30
+          if grep -q 'AtlasPca.AspNetCore/' "$RUNNER_TEMP/globs.txt"; then
+            # the middleware project: Stryker runs from its test project, the same settings otherwise
+            python3 -c 'import json; c = json.load(open("stryker-config.json")); c["stryker-config"].update({"project": "AtlasPca.AspNetCore.csproj", "test-projects": ["AtlasPca.AspNetCore.Tests.csproj"]}); json.dump(c, open("../AtlasPca.AspNetCore.Tests/stryker-config.json", "w"))'
+            cd ../AtlasPca.AspNetCore.Tests
+          fi
+          # shards 1 and 20 (and the Pca.cs spans 70, 71) lost their runner (memory) at 4 workers x 3 GiB: 2 workers there
+          CONC=4; case "${{ matrix.shard }}" in 1|20|70|71|304|305|306|307|308|399|400|401|402|403|404|405|406|407|408|409) CONC=2;; 47|49|50|80|81|82|384|385|386|387|415|416|417|418|419) CONC=1;; esac
+          touch "$RUNNER_TEMP/stryker-ran"
+          # watchdog: logs memory / load / threads every 20 s and SIGKILLs a dotnet process over 9 GB RSS (a mutant's test host, not the runner);
+          # its kill log is read by the isolate step. Plain background loop: no trap, no wait.
+          bash "$GITHUB_WORKSPACE/.github/scripts/watchdog.sh" "$RUNNER_TEMP/watchdog.log" &
+          WD=$!
+          rc=0
+          dotnet stryker --config-file stryker-config.json --concurrency "$CONC" "${M[@]}" 2>&1 | grep -vE '^\s*$' | tee "$RUNNER_TEMP/stryker.out" | tail -30 || rc=$?
+          kill "$WD" 2>/dev/null || true
+          [ "$rc" = 0 ] || grep -aE "error CS|CS[0-9]{4}|compil|rollback|Rollback" "$RUNNER_TEMP/stryker.out" | cut -c1-400 | head -80 || true
+          exit "$rc"
       - name: Report (+ every in-scope CompileError and every carried survivor tested alone)
         run: |
           S="$GITHUB_WORKSPACE/.github/scripts"; D="$MONO/sdks/dotnet-pca"
-          REP="$(ls -d "$D"/AtlasPca.Corpus.Tests/StrykerOutput/*/reports/mutation-report.json 2>/dev/null | tail -1 || true)"
+          REP="$(ls -d "$D"/AtlasPca.Corpus.Tests/StrykerOutput/*/reports/mutation-report.json "$D"/AtlasPca.AspNetCore.Tests/StrykerOutput/*/reports/mutation-report.json 2>/dev/null | tail -1 || true)"
           [ -n "$REP" ] || [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no Stryker report"; exit 1; }
-          A=(--scope "$RUNNER_TEMP/scope.json" --all "$RUNNER_TEMP/all.json" --retest "$RUNNER_TEMP/retest.json")
+          # Stryker ran but wrote no report: nothing may be carried from the baseline as if it had been re-run
+          [ ! -f "$RUNNER_TEMP/stryker-ran" ] || [ -n "$REP" ] || { echo "::error::Stryker ran but wrote no report"; exit 1; }
+          A=(--scope "$RUNNER_TEMP/scope.json" --all "$RUNNER_TEMP/all.json" --retest "$RUNNER_TEMP/retest.json" --runerr-log "$RUNNER_TEMP/runerr-stryker.log")
           [ -n "$REP" ] && A+=(--report "$REP")
           [ -f "$RUNNER_TEMP/carried.json" ] && A+=(--carried "$RUNNER_TEMP/carried.json")
           python3 "$S/stryker-report.py" collect "${A[@]}"
           # the isolated builds need the unfenced sources (the fenced copy has the shard's directive lines)
-          cp "$GITHUB_WORKSPACE"/AtlasPca/*.cs "$D/AtlasPca/"
+          cp -R "$GITHUB_WORKSPACE"/AtlasPca/. "$D/AtlasPca/"
+          cp -R "$GITHUB_WORKSPACE"/AtlasPca.AspNetCore/. "$D/AtlasPca.AspNetCore/"
           if [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/retest.json")" -gt 0 ]; then
-            python3 "$S/stryker-isolate.py" --src "$D" --mutants "$RUNNER_TEMP/retest.json" --out "$RUNNER_TEMP/isolated.json" \
-              --jobs 4 --stop-on-fail > "$RUNNER_TEMP/isolate.log" 2>&1 || { tail -80 "$RUNNER_TEMP/isolate.log"; echo "::error::stryker-isolate.py failed"; exit 1; }
+            bash "$S/watchdog.sh" "$RUNNER_TEMP/watchdog.log" &
+            WD=$!
+            python3 "$S/stryker-isolate.py" --src "$D" --mutants "$RUNNER_TEMP/retest.json" --out "$RUNNER_TEMP/isolated.json" --watchdog-log "$RUNNER_TEMP/watchdog.log" \
+              --jobs 4 --stop-on-fail --deadline $((JOB_START + 305 * 60)) > "$RUNNER_TEMP/isolate.log" 2>&1 || { kill "$WD" 2>/dev/null || true; tail -80 "$RUNNER_TEMP/isolate.log"; echo "::error::stryker-isolate.py failed"; exit 1; }
+            kill "$WD" 2>/dev/null || true
+            tail -30 "$RUNNER_TEMP/isolate.log"
             grep -vE '^\[[0-9]+/[0-9]+\] (Killed|CompileError) ' "$RUNNER_TEMP/isolate.log" | tail -80
           fi
           python3 "$S/stryker-report.py" finish --all "$RUNNER_TEMP/all.json" --isolated "$RUNNER_TEMP/isolated.json" \
-            --sources "$GITHUB_WORKSPACE/AtlasPca" --scope "$RUNNER_TEMP/scope.json" --counts counts.json \
-            --survivors survivors.json --baseline stryker-baseline.json
+            --sources "$GITHUB_WORKSPACE" --scope "$RUNNER_TEMP/scope.json" --counts counts.json \
+            --survivors survivors.json --baseline stryker-baseline.json --runerrors run-errors-${{ matrix.shard }}.json \
+            --ledger "$MONO/sdks/dotnet-pca/mutation-run-errors.json" --killed killed-${{ matrix.shard }}.json
           node .github/scripts/mutation-shard-report.mjs --crate="$CRATE" --shard=${{ matrix.shard }} --of="$SHARDS" --tool=stryker-net \
             --counts=counts.json --survivors=survivors.json --out=shard-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v4
         with:
           name: shard-${{ matrix.shard }}
-          path: shard-${{ matrix.shard }}.json
+          path: |
+            shard-${{ matrix.shard }}.json
+            run-errors-${{ matrix.shard }}.json
+            killed-${{ matrix.shard }}.json
       - uses: actions/upload-artifact@v4
         with:
           name: stryker-baseline-${{ matrix.shard }}
           path: stryker-baseline.json
           retention-days: 30
+      # mutants the time budget left untested are listed as UNTESTED survivors (no ledger entry can match one: the merge
+      # fails) and the shard fails too; the next targeted run tests them from this shard's baseline
+      - name: Every in-scope mutant tested
+        run: |
+          n="$(python3 -c 'import json; c = json.load(open("counts.json")); print(c.get("Untested", 0) + c.get("Ignored", 0))')"
+          [ "$n" = 0 ] || { echo "::error::$n mutant(s) left untested by the time budget"; exit 1; }
+
+  shard-b:
+    if: ${{ needs.reuse.outputs.skip != 'true' }}
+    name: shard ${{ matrix.shard }}/725
+    needs: [reuse, natives]
+    runs-on: ubuntu-latest
+    # the one-by-one tests stop starting new mutants at 305 minutes (stryker-isolate.py --deadline): the shard always reports
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      # org rule: a mutation run holds at most 8 of the 60 runners, so CI is never stuck behind shards
+      max-parallel: 256 # Enterprise plan: 500 concurrent jobs org-wide; GitHub queues anything above that
+      matrix:
+        shard: [258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399, 400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 419, 436, 437, 438, 439, 440, 441, 442, 443, 444, 445, 446, 447, 448, 449, 450, 451, 452, 453, 454, 455, 456, 457, 458, 459, 460, 461, 462, 463, 464, 465, 466, 467, 468, 469, 470, 471, 472, 473, 474, 475, 476, 477, 478, 479, 480, 481, 482, 483, 484, 485, 486, 487, 488, 489, 490, 491, 492, 493, 494, 495, 496, 497, 498, 499, 500, 501, 502, 503, 504, 505, 506, 507, 508, 509, 510, 511, 512, 513, 514, 515, 516, 517, 518, 519, 520, 521, 522, 523]
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Flagship tooling + source layout
+        run: .github/scripts/mutation-layout.sh "$CRATE"
+      - name: Native libraries (built once by the natives job; libatlas_less so the LESS branches are tested, the fake LESS libraries)
+        uses: actions/download-artifact@v4
+        with:
+          name: natives
+          path: ${{ runner.temp }}/natives
+      - name: Native library paths
+        run: sed "s#@N@#$RUNNER_TEMP/natives#g" "$RUNNER_TEMP/natives/env.txt" >> "$GITHUB_ENV"
+      - name: RSA DPoP oracle corpus (generated, never committed)
+        run: .github/scripts/dpop-rsa-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data/ref-dpop-rsa.json.gz"
+      - name: Secret-key oracle corpora (generated, never committed)
+        run: .github/scripts/gen-secret-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data" oprf:oprf core-frost-java:core-frost-java attest-eat:attest-eat frost-dkg:frost-dkg
+      - name: Baseline (targeted mode)
+        if: ${{ !(inputs.full || (startsWith(github.ref_name, 'ci/') && endsWith(github.ref_name, '-rc') || startsWith(github.ref_name, 'ci/gate-')) || contains(github.event.head_commit.message, '[force-full]')) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE: ${{ inputs.baseline_run }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/baseline-in"
+          ids="$BASELINE"
+          if [ -z "$ids" ]; then
+            ids="$(gh run list -R "$GITHUB_REPOSITORY" --workflow mutation.yml --branch "$GITHUB_REF_NAME" --limit 20 \
+                     --json databaseId -q '.[].databaseId' | grep -vx "$GITHUB_RUN_ID" || true)"
+          fi
+          for id in $ids; do
+            if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "stryker-baseline-$SHARD" -D "$RUNNER_TEMP/baseline-in" 2>/dev/null \
+               && [ -s "$RUNNER_TEMP/baseline-in/stryker-baseline.json" ]; then
+              echo "STRYKER_BASELINE=$RUNNER_TEMP/baseline-in/stryker-baseline.json" >> "$GITHUB_ENV"
+              echo "targeted: shard $SHARD seeded from run $id"; exit 0
+            fi
+          done
+          echo "::notice::shard $SHARD: no baseline found, full run (seeds the baseline for the next run)"
+      - name: Isolate selftest (process-group kill, watchdog kill is a RunError)
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/stryker-isolate.selftest.py"
+      - name: Mutate
+        working-directory: ${{ env.MONO }}/sdks/dotnet-pca/AtlasPca.Corpus.Tests
+        env:
+          # the oracle's RunErrorProbe logs every OutOfMemoryException (with its test) here: a mutant whose killing test only
+          # hit the heap cap is re-tested alone and reported as a RunError, never as a kill
+          PCA_RUNERR_LOG: ${{ runner.temp }}/runerr-stryker.log
+        run: |
+          set -o pipefail   # a failed Stryker run must fail the step (the grep|tail pipe below masked its exit status)
+          # pinned. 4.8.1 (the version the ledger was built with) exhausts its 50 compile attempts on this project and aborts with
+          # "Internal error due to compile error": its rollback of a CS0165 (use of unassigned local, raised at the USE of a pattern
+          # variable, far from the mutant that hid its assignment) only peels the mutants around the use, one layer per attempt.
+          # 4.14.2 finds the mutant that erased the assignment (rollback: CS0165/CS0177/CS0161) and adds an aggressive mode before the
+          # last attempt; same mutators and report schema, still net8.0. The module shards below stay on 4.8.1 (they compile).
+          # Its project analysis cannot parse the compiler command line of the newer SDKs preinstalled on the runner, so this copy
+          # pins the .NET 8 SDK (global.json, CI copy only).
+          dotnet tool install -g dotnet-stryker --version 4.14.2
+          SDK8="$(dotnet --list-sdks | awk '/^8\./ { v = $1 } END { print v }')"
+          [ -n "$SDK8" ] || { echo "::error::no .NET 8 SDK"; exit 1; }
+          (cd .. && dotnet new globaljson --sdk-version "$SDK8" --roll-forward disable --force >/dev/null)
+          dotnet --version
+          dotnet test -c Release > "$RUNNER_TEMP/baseline.log" 2>&1 && (cd ../AtlasPca.AspNetCore.Tests && dotnet test -c Release >> "$RUNNER_TEMP/baseline.log" 2>&1) || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the oracle fails on the unmutated source"; exit 1; }
+          [ ! -s "$PCA_RUNERR_LOG" ] || { cat "$PCA_RUNERR_LOG"; echo "::error::the unmutated source hits OutOfMemoryException"; exit 1; }
+          # a mutant that allocates without bound must die alone (a RunError, never a kill: see PCA_RUNERR_LOG), not exhaust
+          # the runner: 3 GiB GC heap per test host, set in the test project's runtimeconfig (CI copy only). Not as a DOTNET_GCHeapHardLimit environment
+          # variable: that also caps Stryker's in-process compilation, and every Pca.cs mutant then "caused compile errors".
+          python3 - <<'PY'
+          s = open("AtlasPca.Corpus.Tests.csproj").read()
+          cap = '<ItemGroup><RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="3221225472" /></ItemGroup>'
+          assert "</Project>" in s
+          open("AtlasPca.Corpus.Tests.csproj", "w").write(s.replace("</Project>", cap + "\n</Project>"))
+          PY
+          T=()
+          [ -n "${STRYKER_BASELINE:-}" ] && T=(--baseline "$STRYKER_BASELINE" --carry "$RUNNER_TEMP/carried.json")
+          python3 "$GITHUB_WORKSPACE/.github/scripts/stryker-spans.py" ${{ matrix.shard }} "$SHARDS" ../AtlasPca \
+            --scope "$RUNNER_TEMP/scope.json" "${T[@]}" > "$RUNNER_TEMP/globs.txt"
+          M=()
+          while read -r g; do M+=(--mutate "$g"); done < "$RUNNER_TEMP/globs.txt"
+          if [ "${#M[@]}" -eq 0 ]; then
+            [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no --mutate glob for this shard"; exit 1; }
+            echo "targeted: no source line of this shard changed since the baseline, Stryker skipped"
+            exit 0
+          fi
+          echo "mutate: ${M[*]}"
+          if grep -q 'AtlasPca.AspNetCore/' "$RUNNER_TEMP/globs.txt"; then
+            # the middleware project: Stryker runs from its test project, the same settings otherwise
+            python3 -c 'import json; c = json.load(open("stryker-config.json")); c["stryker-config"].update({"project": "AtlasPca.AspNetCore.csproj", "test-projects": ["AtlasPca.AspNetCore.Tests.csproj"]}); json.dump(c, open("../AtlasPca.AspNetCore.Tests/stryker-config.json", "w"))'
+            cd ../AtlasPca.AspNetCore.Tests
+          fi
+          # shards 1 and 20 (and the Pca.cs spans 70, 71) lost their runner (memory) at 4 workers x 3 GiB: 2 workers there
+          CONC=4; case "${{ matrix.shard }}" in 1|20|70|71|304|305|306|307|308|399|400|401|402|403|404|405|406|407|408|409) CONC=2;; 47|49|50|80|81|82|384|385|386|387|415|416|417|418|419) CONC=1;; esac
+          touch "$RUNNER_TEMP/stryker-ran"
+          # watchdog: logs memory / load / threads every 20 s and SIGKILLs a dotnet process over 9 GB RSS (a mutant's test host, not the runner);
+          # its kill log is read by the isolate step. Plain background loop: no trap, no wait.
+          bash "$GITHUB_WORKSPACE/.github/scripts/watchdog.sh" "$RUNNER_TEMP/watchdog.log" &
+          WD=$!
+          rc=0
+          dotnet stryker --config-file stryker-config.json --concurrency "$CONC" "${M[@]}" 2>&1 | grep -vE '^\s*$' | tee "$RUNNER_TEMP/stryker.out" | tail -30 || rc=$?
+          kill "$WD" 2>/dev/null || true
+          [ "$rc" = 0 ] || grep -aE "error CS|CS[0-9]{4}|compil|rollback|Rollback" "$RUNNER_TEMP/stryker.out" | cut -c1-400 | head -80 || true
+          exit "$rc"
+      - name: Report (+ every in-scope CompileError and every carried survivor tested alone)
+        run: |
+          S="$GITHUB_WORKSPACE/.github/scripts"; D="$MONO/sdks/dotnet-pca"
+          REP="$(ls -d "$D"/AtlasPca.Corpus.Tests/StrykerOutput/*/reports/mutation-report.json "$D"/AtlasPca.AspNetCore.Tests/StrykerOutput/*/reports/mutation-report.json 2>/dev/null | tail -1 || true)"
+          [ -n "$REP" ] || [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no Stryker report"; exit 1; }
+          # Stryker ran but wrote no report: nothing may be carried from the baseline as if it had been re-run
+          [ ! -f "$RUNNER_TEMP/stryker-ran" ] || [ -n "$REP" ] || { echo "::error::Stryker ran but wrote no report"; exit 1; }
+          A=(--scope "$RUNNER_TEMP/scope.json" --all "$RUNNER_TEMP/all.json" --retest "$RUNNER_TEMP/retest.json" --runerr-log "$RUNNER_TEMP/runerr-stryker.log")
+          [ -n "$REP" ] && A+=(--report "$REP")
+          [ -f "$RUNNER_TEMP/carried.json" ] && A+=(--carried "$RUNNER_TEMP/carried.json")
+          python3 "$S/stryker-report.py" collect "${A[@]}"
+          # the isolated builds need the unfenced sources (the fenced copy has the shard's directive lines)
+          cp -R "$GITHUB_WORKSPACE"/AtlasPca/. "$D/AtlasPca/"
+          cp -R "$GITHUB_WORKSPACE"/AtlasPca.AspNetCore/. "$D/AtlasPca.AspNetCore/"
+          if [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/retest.json")" -gt 0 ]; then
+            bash "$S/watchdog.sh" "$RUNNER_TEMP/watchdog.log" &
+            WD=$!
+            python3 "$S/stryker-isolate.py" --src "$D" --mutants "$RUNNER_TEMP/retest.json" --out "$RUNNER_TEMP/isolated.json" --watchdog-log "$RUNNER_TEMP/watchdog.log" \
+              --jobs 4 --stop-on-fail --deadline $((JOB_START + 305 * 60)) > "$RUNNER_TEMP/isolate.log" 2>&1 || { kill "$WD" 2>/dev/null || true; tail -80 "$RUNNER_TEMP/isolate.log"; echo "::error::stryker-isolate.py failed"; exit 1; }
+            kill "$WD" 2>/dev/null || true
+            tail -30 "$RUNNER_TEMP/isolate.log"
+            grep -vE '^\[[0-9]+/[0-9]+\] (Killed|CompileError) ' "$RUNNER_TEMP/isolate.log" | tail -80
+          fi
+          python3 "$S/stryker-report.py" finish --all "$RUNNER_TEMP/all.json" --isolated "$RUNNER_TEMP/isolated.json" \
+            --sources "$GITHUB_WORKSPACE" --scope "$RUNNER_TEMP/scope.json" --counts counts.json \
+            --survivors survivors.json --baseline stryker-baseline.json --runerrors run-errors-${{ matrix.shard }}.json \
+            --ledger "$MONO/sdks/dotnet-pca/mutation-run-errors.json" --killed killed-${{ matrix.shard }}.json
+          node .github/scripts/mutation-shard-report.mjs --crate="$CRATE" --shard=${{ matrix.shard }} --of="$SHARDS" --tool=stryker-net \
+            --counts=counts.json --survivors=survivors.json --out=shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: |
+            shard-${{ matrix.shard }}.json
+            run-errors-${{ matrix.shard }}.json
+            killed-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stryker-baseline-${{ matrix.shard }}
+          path: stryker-baseline.json
+          retention-days: 30
+      # mutants the time budget left untested are listed as UNTESTED survivors (no ledger entry can match one: the merge
+      # fails) and the shard fails too; the next targeted run tests them from this shard's baseline
+      - name: Every in-scope mutant tested
+        run: |
+          n="$(python3 -c 'import json; c = json.load(open("counts.json")); print(c.get("Untested", 0) + c.get("Ignored", 0))')"
+          [ "$n" = 0 ] || { echo "::error::$n mutant(s) left untested by the time budget"; exit 1; }
+
+  shard-c:
+    if: ${{ needs.reuse.outputs.skip != 'true' }}
+    name: shard ${{ matrix.shard }}/725
+    needs: [reuse, natives]
+    runs-on: ubuntu-latest
+    # the one-by-one tests stop starting new mutants at 305 minutes (stryker-isolate.py --deadline): the shard always reports
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      # org rule: a mutation run holds at most 8 of the 60 runners, so CI is never stuck behind shards
+      max-parallel: 256 # Enterprise plan: 500 concurrent jobs org-wide; GitHub queues anything above that
+      matrix:
+        shard: [524, 525, 526, 527, 528, 529, 530, 531, 532, 533, 534, 535, 536, 537, 538, 539, 540, 541, 542, 543, 544, 545, 546, 547, 548, 549, 550, 551, 552, 553, 554, 555, 556, 557, 558, 559, 560, 561, 562, 563, 564, 565, 566, 567, 568, 569, 570, 571, 572, 573, 574, 575, 576, 577, 578, 579, 580, 581, 582, 583, 584, 585, 586, 587, 588, 589, 590, 591, 592, 593, 594, 595, 596, 597, 598, 599, 600, 601, 602, 603, 604, 605, 606, 607, 608, 609, 610, 611, 612, 613, 614, 615, 616, 617, 618, 619, 620, 621, 622, 623, 624, 625, 626, 627, 628, 629, 630, 631, 632, 633, 634, 635, 636, 637, 638, 639, 640, 641, 642, 643, 644, 645, 646, 647, 648, 649, 650, 651, 652, 653, 654, 655, 656, 657, 658, 659, 660, 661, 662, 663, 664, 665, 666, 667, 668, 669, 670, 671, 672, 673, 674, 675, 676, 677, 678, 679, 680, 681, 682, 683, 684, 685, 686, 687, 688, 689, 690, 691, 692, 693, 694, 695, 696, 697, 698, 699, 700, 701, 702, 703, 704, 705, 706, 707, 708, 709, 710, 711, 712, 713, 714, 715, 716, 717, 718, 719, 720, 721, 722, 723, 724, 725]
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Flagship tooling + source layout
+        run: .github/scripts/mutation-layout.sh "$CRATE"
+      - name: Native libraries (built once by the natives job; libatlas_less so the LESS branches are tested, the fake LESS libraries)
+        uses: actions/download-artifact@v4
+        with:
+          name: natives
+          path: ${{ runner.temp }}/natives
+      - name: Native library paths
+        run: sed "s#@N@#$RUNNER_TEMP/natives#g" "$RUNNER_TEMP/natives/env.txt" >> "$GITHUB_ENV"
+      - name: RSA DPoP oracle corpus (generated, never committed)
+        run: .github/scripts/dpop-rsa-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data/ref-dpop-rsa.json.gz"
+      - name: Secret-key oracle corpora (generated, never committed)
+        run: .github/scripts/gen-secret-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data" oprf:oprf core-frost-java:core-frost-java attest-eat:attest-eat frost-dkg:frost-dkg
+      - name: Baseline (targeted mode)
+        if: ${{ !(inputs.full || (startsWith(github.ref_name, 'ci/') && endsWith(github.ref_name, '-rc') || startsWith(github.ref_name, 'ci/gate-')) || contains(github.event.head_commit.message, '[force-full]')) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE: ${{ inputs.baseline_run }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/baseline-in"
+          ids="$BASELINE"
+          if [ -z "$ids" ]; then
+            ids="$(gh run list -R "$GITHUB_REPOSITORY" --workflow mutation.yml --branch "$GITHUB_REF_NAME" --limit 20 \
+                     --json databaseId -q '.[].databaseId' | grep -vx "$GITHUB_RUN_ID" || true)"
+          fi
+          for id in $ids; do
+            if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "stryker-baseline-$SHARD" -D "$RUNNER_TEMP/baseline-in" 2>/dev/null \
+               && [ -s "$RUNNER_TEMP/baseline-in/stryker-baseline.json" ]; then
+              echo "STRYKER_BASELINE=$RUNNER_TEMP/baseline-in/stryker-baseline.json" >> "$GITHUB_ENV"
+              echo "targeted: shard $SHARD seeded from run $id"; exit 0
+            fi
+          done
+          echo "::notice::shard $SHARD: no baseline found, full run (seeds the baseline for the next run)"
+      - name: Isolate selftest (process-group kill, watchdog kill is a RunError)
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/stryker-isolate.selftest.py"
+      - name: Mutate
+        working-directory: ${{ env.MONO }}/sdks/dotnet-pca/AtlasPca.Corpus.Tests
+        env:
+          # the oracle's RunErrorProbe logs every OutOfMemoryException (with its test) here: a mutant whose killing test only
+          # hit the heap cap is re-tested alone and reported as a RunError, never as a kill
+          PCA_RUNERR_LOG: ${{ runner.temp }}/runerr-stryker.log
+        run: |
+          set -o pipefail   # a failed Stryker run must fail the step (the grep|tail pipe below masked its exit status)
+          # pinned. 4.8.1 (the version the ledger was built with) exhausts its 50 compile attempts on this project and aborts with
+          # "Internal error due to compile error": its rollback of a CS0165 (use of unassigned local, raised at the USE of a pattern
+          # variable, far from the mutant that hid its assignment) only peels the mutants around the use, one layer per attempt.
+          # 4.14.2 finds the mutant that erased the assignment (rollback: CS0165/CS0177/CS0161) and adds an aggressive mode before the
+          # last attempt; same mutators and report schema, still net8.0. The module shards below stay on 4.8.1 (they compile).
+          # Its project analysis cannot parse the compiler command line of the newer SDKs preinstalled on the runner, so this copy
+          # pins the .NET 8 SDK (global.json, CI copy only).
+          dotnet tool install -g dotnet-stryker --version 4.14.2
+          SDK8="$(dotnet --list-sdks | awk '/^8\./ { v = $1 } END { print v }')"
+          [ -n "$SDK8" ] || { echo "::error::no .NET 8 SDK"; exit 1; }
+          (cd .. && dotnet new globaljson --sdk-version "$SDK8" --roll-forward disable --force >/dev/null)
+          dotnet --version
+          dotnet test -c Release > "$RUNNER_TEMP/baseline.log" 2>&1 && (cd ../AtlasPca.AspNetCore.Tests && dotnet test -c Release >> "$RUNNER_TEMP/baseline.log" 2>&1) || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the oracle fails on the unmutated source"; exit 1; }
+          [ ! -s "$PCA_RUNERR_LOG" ] || { cat "$PCA_RUNERR_LOG"; echo "::error::the unmutated source hits OutOfMemoryException"; exit 1; }
+          # a mutant that allocates without bound must die alone (a RunError, never a kill: see PCA_RUNERR_LOG), not exhaust
+          # the runner: 3 GiB GC heap per test host, set in the test project's runtimeconfig (CI copy only). Not as a DOTNET_GCHeapHardLimit environment
+          # variable: that also caps Stryker's in-process compilation, and every Pca.cs mutant then "caused compile errors".
+          python3 - <<'PY'
+          s = open("AtlasPca.Corpus.Tests.csproj").read()
+          cap = '<ItemGroup><RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="3221225472" /></ItemGroup>'
+          assert "</Project>" in s
+          open("AtlasPca.Corpus.Tests.csproj", "w").write(s.replace("</Project>", cap + "\n</Project>"))
+          PY
+          T=()
+          [ -n "${STRYKER_BASELINE:-}" ] && T=(--baseline "$STRYKER_BASELINE" --carry "$RUNNER_TEMP/carried.json")
+          python3 "$GITHUB_WORKSPACE/.github/scripts/stryker-spans.py" ${{ matrix.shard }} "$SHARDS" ../AtlasPca \
+            --scope "$RUNNER_TEMP/scope.json" "${T[@]}" > "$RUNNER_TEMP/globs.txt"
+          M=()
+          while read -r g; do M+=(--mutate "$g"); done < "$RUNNER_TEMP/globs.txt"
+          if [ "${#M[@]}" -eq 0 ]; then
+            [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no --mutate glob for this shard"; exit 1; }
+            echo "targeted: no source line of this shard changed since the baseline, Stryker skipped"
+            exit 0
+          fi
+          echo "mutate: ${M[*]}"
+          if grep -q 'AtlasPca.AspNetCore/' "$RUNNER_TEMP/globs.txt"; then
+            # the middleware project: Stryker runs from its test project, the same settings otherwise
+            python3 -c 'import json; c = json.load(open("stryker-config.json")); c["stryker-config"].update({"project": "AtlasPca.AspNetCore.csproj", "test-projects": ["AtlasPca.AspNetCore.Tests.csproj"]}); json.dump(c, open("../AtlasPca.AspNetCore.Tests/stryker-config.json", "w"))'
+            cd ../AtlasPca.AspNetCore.Tests
+          fi
+          # shards 1 and 20 (and the Pca.cs spans 70, 71) lost their runner (memory) at 4 workers x 3 GiB: 2 workers there
+          CONC=4; case "${{ matrix.shard }}" in 1|20|70|71|304|305|306|307|308|399|400|401|402|403|404|405|406|407|408|409) CONC=2;; 47|49|50|80|81|82|384|385|386|387|415|416|417|418|419) CONC=1;; esac
+          touch "$RUNNER_TEMP/stryker-ran"
+          # watchdog: logs memory / load / threads every 20 s and SIGKILLs a dotnet process over 9 GB RSS (a mutant's test host, not the runner);
+          # its kill log is read by the isolate step. Plain background loop: no trap, no wait.
+          bash "$GITHUB_WORKSPACE/.github/scripts/watchdog.sh" "$RUNNER_TEMP/watchdog.log" &
+          WD=$!
+          rc=0
+          dotnet stryker --config-file stryker-config.json --concurrency "$CONC" "${M[@]}" 2>&1 | grep -vE '^\s*$' | tee "$RUNNER_TEMP/stryker.out" | tail -30 || rc=$?
+          kill "$WD" 2>/dev/null || true
+          [ "$rc" = 0 ] || grep -aE "error CS|CS[0-9]{4}|compil|rollback|Rollback" "$RUNNER_TEMP/stryker.out" | cut -c1-400 | head -80 || true
+          exit "$rc"
+      - name: Report (+ every in-scope CompileError and every carried survivor tested alone)
+        run: |
+          S="$GITHUB_WORKSPACE/.github/scripts"; D="$MONO/sdks/dotnet-pca"
+          REP="$(ls -d "$D"/AtlasPca.Corpus.Tests/StrykerOutput/*/reports/mutation-report.json "$D"/AtlasPca.AspNetCore.Tests/StrykerOutput/*/reports/mutation-report.json 2>/dev/null | tail -1 || true)"
+          [ -n "$REP" ] || [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no Stryker report"; exit 1; }
+          # Stryker ran but wrote no report: nothing may be carried from the baseline as if it had been re-run
+          [ ! -f "$RUNNER_TEMP/stryker-ran" ] || [ -n "$REP" ] || { echo "::error::Stryker ran but wrote no report"; exit 1; }
+          A=(--scope "$RUNNER_TEMP/scope.json" --all "$RUNNER_TEMP/all.json" --retest "$RUNNER_TEMP/retest.json" --runerr-log "$RUNNER_TEMP/runerr-stryker.log")
+          [ -n "$REP" ] && A+=(--report "$REP")
+          [ -f "$RUNNER_TEMP/carried.json" ] && A+=(--carried "$RUNNER_TEMP/carried.json")
+          python3 "$S/stryker-report.py" collect "${A[@]}"
+          # the isolated builds need the unfenced sources (the fenced copy has the shard's directive lines)
+          cp -R "$GITHUB_WORKSPACE"/AtlasPca/. "$D/AtlasPca/"
+          cp -R "$GITHUB_WORKSPACE"/AtlasPca.AspNetCore/. "$D/AtlasPca.AspNetCore/"
+          if [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/retest.json")" -gt 0 ]; then
+            bash "$S/watchdog.sh" "$RUNNER_TEMP/watchdog.log" &
+            WD=$!
+            python3 "$S/stryker-isolate.py" --src "$D" --mutants "$RUNNER_TEMP/retest.json" --out "$RUNNER_TEMP/isolated.json" --watchdog-log "$RUNNER_TEMP/watchdog.log" \
+              --jobs 4 --stop-on-fail --deadline $((JOB_START + 305 * 60)) > "$RUNNER_TEMP/isolate.log" 2>&1 || { kill "$WD" 2>/dev/null || true; tail -80 "$RUNNER_TEMP/isolate.log"; echo "::error::stryker-isolate.py failed"; exit 1; }
+            kill "$WD" 2>/dev/null || true
+            tail -30 "$RUNNER_TEMP/isolate.log"
+            grep -vE '^\[[0-9]+/[0-9]+\] (Killed|CompileError) ' "$RUNNER_TEMP/isolate.log" | tail -80
+          fi
+          python3 "$S/stryker-report.py" finish --all "$RUNNER_TEMP/all.json" --isolated "$RUNNER_TEMP/isolated.json" \
+            --sources "$GITHUB_WORKSPACE" --scope "$RUNNER_TEMP/scope.json" --counts counts.json \
+            --survivors survivors.json --baseline stryker-baseline.json --runerrors run-errors-${{ matrix.shard }}.json \
+            --ledger "$MONO/sdks/dotnet-pca/mutation-run-errors.json" --killed killed-${{ matrix.shard }}.json
+          node .github/scripts/mutation-shard-report.mjs --crate="$CRATE" --shard=${{ matrix.shard }} --of="$SHARDS" --tool=stryker-net \
+            --counts=counts.json --survivors=survivors.json --out=shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: |
+            shard-${{ matrix.shard }}.json
+            run-errors-${{ matrix.shard }}.json
+            killed-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stryker-baseline-${{ matrix.shard }}
+          path: stryker-baseline.json
+          retention-days: 30
+      # mutants the time budget left untested are listed as UNTESTED survivors (no ledger entry can match one: the merge
+      # fails) and the shard fails too; the next targeted run tests them from this shard's baseline
+      - name: Every in-scope mutant tested
+        run: |
+          n="$(python3 -c 'import json; c = json.load(open("counts.json")); print(c.get("Untested", 0) + c.get("Ignored", 0))')"
+          [ "$n" = 0 ] || { echo "::error::$n mutant(s) left untested by the time budget"; exit 1; }
+
+  # the opt-in modules: same pipeline as `shard` (spans plan, targeted baseline, stryker-isolate.py, report), one Stryker project per
+  # shard whose oracle is the module's test project; the native library each replay workflow builds is built here too
+  module-shard:
+    if: ${{ needs.reuse.outputs.skip != 'true' }}
+    name: module shard ${{ matrix.shard }}/725 (${{ matrix.mod }})
+    needs: [reuse, natives]
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      max-parallel: 256
+      matrix:
+        include:
+          - { shard: 83, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 84, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 85, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 86, mod: fhe, proj: AtlasPca.Fhe, tests: AtlasPca.Fhe.Tests, dirs: 'AtlasPca,AtlasPca.Fhe', jobs: 4 }
+          - { shard: 87, mod: lwe-ot, proj: AtlasPca.MpcLweOt, tests: AtlasPca.MpcLweOt.Tests, dirs: 'AtlasPca,AtlasPca.Mpc,AtlasPca.Corpus.Tests,AtlasPca.MpcLweOt', jobs: 2 }
+          - { shard: 88, mod: fndsa, proj: AtlasPca.Fndsa, tests: AtlasPca.Fndsa.Tests, dirs: 'AtlasPca,AtlasPca.Fndsa', jobs: 4 }
+          - { shard: 222, mod: zk, proj: AtlasPca.Zk, tests: AtlasPca.Zk.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Zk', jobs: 4 }
+          - { shard: 420, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 421, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 422, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 423, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 424, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 425, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 426, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 427, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 428, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 429, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 430, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 431, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 432, mod: pairing, proj: AtlasPca.Pairing, tests: AtlasPca.Pairing.Tests, dirs: 'AtlasPca,AtlasPca.Corpus.Tests,AtlasPca.Pairing', jobs: 2 }
+          - { shard: 433, mod: fhe, proj: AtlasPca.Fhe, tests: AtlasPca.Fhe.Tests, dirs: 'AtlasPca,AtlasPca.Fhe', jobs: 4 }
+          - { shard: 434, mod: lwe-ot, proj: AtlasPca.MpcLweOt, tests: AtlasPca.MpcLweOt.Tests, dirs: 'AtlasPca,AtlasPca.Mpc,AtlasPca.Corpus.Tests,AtlasPca.MpcLweOt', jobs: 2 }
+          - { shard: 435, mod: lwe-ot, proj: AtlasPca.MpcLweOt, tests: AtlasPca.MpcLweOt.Tests, dirs: 'AtlasPca,AtlasPca.Mpc,AtlasPca.Corpus.Tests,AtlasPca.MpcLweOt', jobs: 2 }
+    env:
+      PROJ: ${{ matrix.proj }}
+      TESTS: ${{ matrix.tests }}
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Flagship tooling + source layout
+        run: .github/scripts/mutation-layout.sh "$CRATE"
+      # native libraries as in the module's replay workflow (pairing.yml, fhe.yml, lwe-ot.yml, fndsa.yml), built once by the natives job
+      - uses: actions/download-artifact@v4
+        with:
+          name: natives
+          path: ${{ runner.temp }}/natives
+      - name: Native library paths
+        run: |
+          sed "s#@N@#$RUNNER_TEMP/natives#g" "$RUNNER_TEMP/natives/env.txt" >> "$GITHUB_ENV"
+          mkdir -p "$MONO/sdks/dotnet-pca/AtlasPca.Pairing.Tests/native"
+          cp -R "$RUNNER_TEMP/natives/pairing-native/." "$MONO/sdks/dotnet-pca/AtlasPca.Pairing.Tests/native/"
+          mkdir -p "$MONO/sdks/dotnet-pca/AtlasPca.Pairing/Blst"
+          cp "$RUNNER_TEMP/natives/pairing-blst/blst.cs" "$MONO/sdks/dotnet-pca/AtlasPca.Pairing/Blst/"
+      - name: Secret-key oracle corpus (abe)
+        if: ${{ matrix.mod == 'pairing' }}
+        run: .github/scripts/gen-secret-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Pairing.Tests/test-data" abe:abe
+      - name: Baseline (targeted mode)
+        if: ${{ !(inputs.full || (startsWith(github.ref_name, 'ci/') && endsWith(github.ref_name, '-rc') || startsWith(github.ref_name, 'ci/gate-')) || contains(github.event.head_commit.message, '[force-full]')) }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASELINE: ${{ inputs.baseline_run }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/baseline-in"
+          ids="$BASELINE"
+          if [ -z "$ids" ]; then
+            ids="$(gh run list -R "$GITHUB_REPOSITORY" --workflow mutation.yml --branch "$GITHUB_REF_NAME" --limit 20 \
+                     --json databaseId -q '.[].databaseId' | grep -vx "$GITHUB_RUN_ID" || true)"
+          fi
+          for id in $ids; do
+            if gh run download "$id" -R "$GITHUB_REPOSITORY" -n "stryker-baseline-$SHARD" -D "$RUNNER_TEMP/baseline-in" 2>/dev/null \
+               && [ -s "$RUNNER_TEMP/baseline-in/stryker-baseline.json" ]; then
+              echo "STRYKER_BASELINE=$RUNNER_TEMP/baseline-in/stryker-baseline.json" >> "$GITHUB_ENV"
+              echo "targeted: shard $SHARD seeded from run $id"; exit 0
+            fi
+          done
+          echo "::notice::shard $SHARD: no baseline found, full run (seeds the baseline for the next run)"
+      - name: Isolate selftest (process-group kill, watchdog kill is a RunError)
+        run: python3 "$GITHUB_WORKSPACE/.github/scripts/stryker-isolate.selftest.py"
+      - name: Mutate
+        working-directory: ${{ env.MONO }}/sdks/dotnet-pca/${{ matrix.tests }}
+        env:
+          PCA_RUNERR_LOG: ${{ runner.temp }}/runerr-stryker.log
+        run: |
+          set -o pipefail
+          dotnet tool install -g dotnet-stryker --version 4.8.1
+          SDK8="$(dotnet --list-sdks | awk '/^8\./ { v = $1 } END { print v }')"
+          [ -n "$SDK8" ] || { echo "::error::no .NET 8 SDK"; exit 1; }
+          (cd .. && dotnet new globaljson --sdk-version "$SDK8" --roll-forward disable --force >/dev/null)
+          dotnet test -c Release > "$RUNNER_TEMP/baseline.log" 2>&1 || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the oracle fails on the unmutated source"; exit 1; }
+          [ ! -s "$PCA_RUNERR_LOG" ] || { cat "$PCA_RUNERR_LOG"; echo "::error::the unmutated source hits OutOfMemoryException"; exit 1; }
+          # the same 3 GiB GC heap cap per test host as the core shards (an unbounded allocation dies alone, as a RunError)
+          python3 - <<'PY'
+          import os
+          f = os.environ["TESTS"] + ".csproj"
+          s = open(f).read()
+          cap = '<ItemGroup><RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="3221225472" /></ItemGroup>'
+          assert "</Project>" in s
+          open(f, "w").write(s.replace("</Project>", cap + "\n</Project>"))
+          PY
+          # the module's own Stryker project: the core's settings, this project and this oracle
+          python3 - <<'PY'
+          import json, os
+          c = json.load(open("../AtlasPca.Corpus.Tests/stryker-config.json"))
+          c["stryker-config"].update({"project": os.environ["PROJ"] + ".csproj", "test-projects": [os.environ["TESTS"] + ".csproj"]})
+          json.dump(c, open("stryker-config.json", "w"))
+          PY
+          T=()
+          [ -n "${STRYKER_BASELINE:-}" ] && T=(--baseline "$STRYKER_BASELINE" --carry "$RUNNER_TEMP/carried.json")
+          python3 "$GITHUB_WORKSPACE/.github/scripts/stryker-spans.py" ${{ matrix.shard }} "$SHARDS" ../AtlasPca \
+            --scope "$RUNNER_TEMP/scope.json" "${T[@]}" > "$RUNNER_TEMP/globs.txt"
+          M=()
+          while read -r g; do M+=(--mutate "$g"); done < "$RUNNER_TEMP/globs.txt"
+          if [ "${#M[@]}" -eq 0 ]; then
+            [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no --mutate glob for this shard"; exit 1; }
+            echo "targeted: no source line of this shard changed since the baseline, Stryker skipped"
+            exit 0
+          fi
+          echo "mutate: ${M[*]}"
+          touch "$RUNNER_TEMP/stryker-ran"
+          bash "$GITHUB_WORKSPACE/.github/scripts/watchdog.sh" "$RUNNER_TEMP/watchdog.log" &
+          WD=$!
+          rc=0
+          dotnet stryker --config-file stryker-config.json --concurrency 4 "${M[@]}" 2>&1 | grep -vE '^\s*$' | tee "$RUNNER_TEMP/stryker.out" | tail -30 || rc=$?
+          kill "$WD" 2>/dev/null || true
+          [ "$rc" = 0 ] || grep -aE "error CS|CS[0-9]{4}|compil|rollback|Rollback" "$RUNNER_TEMP/stryker.out" | cut -c1-400 | head -80 || true
+          exit "$rc"
+      - name: Report (+ every in-scope CompileError and every carried survivor tested alone)
+        run: |
+          S="$GITHUB_WORKSPACE/.github/scripts"; D="$MONO/sdks/dotnet-pca"
+          REP="$(ls -d "$D/$TESTS"/StrykerOutput/*/reports/mutation-report.json 2>/dev/null | tail -1 || true)"
+          [ -n "$REP" ] || [ -n "${STRYKER_BASELINE:-}" ] || { echo "::error::no Stryker report"; exit 1; }
+          [ ! -f "$RUNNER_TEMP/stryker-ran" ] || [ -n "$REP" ] || { echo "::error::Stryker ran but wrote no report"; exit 1; }
+          A=(--scope "$RUNNER_TEMP/scope.json" --all "$RUNNER_TEMP/all.json" --retest "$RUNNER_TEMP/retest.json" --runerr-log "$RUNNER_TEMP/runerr-stryker.log")
+          [ -n "$REP" ] && A+=(--report "$REP")
+          [ -f "$RUNNER_TEMP/carried.json" ] && A+=(--carried "$RUNNER_TEMP/carried.json")
+          python3 "$S/stryker-report.py" collect "${A[@]}"
+          # the isolated builds need the unfenced sources (the fenced copy has the shard's directive lines)
+          cp -R "$GITHUB_WORKSPACE/$PROJ/." "$D/$PROJ/"
+          if [ "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/retest.json")" -gt 0 ]; then
+            bash "$S/watchdog.sh" "$RUNNER_TEMP/watchdog.log" &
+            WD=$!
+            python3 "$S/stryker-isolate.py" --src "$D" --mutants "$RUNNER_TEMP/retest.json" --out "$RUNNER_TEMP/isolated.json" --watchdog-log "$RUNNER_TEMP/watchdog.log" \
+              --tests "$TESTS" --dirs "${{ matrix.dirs }}" \
+              --jobs ${{ matrix.jobs }} --stop-on-fail --deadline $((JOB_START + 305 * 60)) > "$RUNNER_TEMP/isolate.log" 2>&1 || { kill "$WD" 2>/dev/null || true; tail -80 "$RUNNER_TEMP/isolate.log"; echo "::error::stryker-isolate.py failed"; exit 1; }
+            kill "$WD" 2>/dev/null || true
+            tail -30 "$RUNNER_TEMP/isolate.log"
+            grep -vE '^\[[0-9]+/[0-9]+\] (Killed|CompileError) ' "$RUNNER_TEMP/isolate.log" | tail -80
+          fi
+          python3 "$S/stryker-report.py" finish --all "$RUNNER_TEMP/all.json" --isolated "$RUNNER_TEMP/isolated.json" \
+            --sources "$GITHUB_WORKSPACE" --scope "$RUNNER_TEMP/scope.json" --counts counts.json \
+            --survivors survivors.json --baseline stryker-baseline.json --runerrors run-errors-${{ matrix.shard }}.json \
+            --ledger "$MONO/sdks/dotnet-pca/mutation-run-errors.json" --killed killed-${{ matrix.shard }}.json
+          node .github/scripts/mutation-shard-report.mjs --crate="$CRATE" --shard=${{ matrix.shard }} --of="$SHARDS" --tool=stryker-net \
+            --counts=counts.json --survivors=survivors.json --out=shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shard-${{ matrix.shard }}
+          path: |
+            shard-${{ matrix.shard }}.json
+            run-errors-${{ matrix.shard }}.json
+            killed-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stryker-baseline-${{ matrix.shard }}
+          path: stryker-baseline.json
+          retention-days: 30
+      - name: Every in-scope mutant tested
+        run: |
+          n="$(python3 -c 'import json; c = json.load(open("counts.json")); print(c.get("Untested", 0) + c.get("Ignored", 0))')"
+          [ "$n" = 0 ] || { echo "::error::$n mutant(s) left untested by the time budget"; exit 1; }
+
+  # Files whose Windows-only branches (OperatingSystem.IsWindows(): the protected-DACL private files of OwnerOnly.cs, CreateHardLinkW / the process
+  # table / no directory fsync in DurableState.cs, the missing directory fsync of FileMeshWitnessStore.cs) no Linux runner executes: they are
+  # mutated ON WINDOWS too, with only the tests that reach them as the oracle. The merge counts a Linux survivor of these files only when it also
+  # survived here (mutation-merge.mjs: a winshard-<n>.json report names its files in `scope`); these shards are not part of SHARDS.
+  winshard:
+    if: ${{ needs.reuse.outputs.skip != 'true' }}
+    needs: reuse
+    name: windows shard ${{ matrix.n }} (${{ matrix.files }})
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { n: 1, files: 'AtlasPca/OwnerOnly.cs', filter: 'FullyQualifiedName~OwnerOnlyTests' }
+          - { n: 2, files: 'AtlasPca/DurableState.cs', filter: 'FullyQualifiedName~DurableStateTests|FullyQualifiedName~DsNativeTests|FullyQualifiedName~KvStateStoreDurableBudgetTests|FullyQualifiedName~OwnerOnlyTests' }
+          - { n: 3, files: 'AtlasPca/Ext/FileMeshWitnessStore.cs', filter: 'FullyQualifiedName~FileMeshWitnessStoreTests|FullyQualifiedName~OwnerOnlyTests' }
+    steps:
+      - run: echo "JOB_START=$(date +%s)" >> "$GITHUB_ENV"
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Flagship tooling + source layout
+        run: .github/scripts/mutation-layout.sh "$CRATE"
+      - name: RSA DPoP oracle corpus (generated, never committed)
+        run: .github/scripts/dpop-rsa-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data/ref-dpop-rsa.json.gz"
+      - name: Secret-key oracle corpora (generated, never committed)
+        run: .github/scripts/gen-secret-corpus.sh "$MONO/sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data" oprf:oprf core-frost-java:core-frost-java attest-eat:attest-eat frost-dkg:frost-dkg
+      - name: Mutate (the tests that reach the file only)
+        working-directory: ${{ env.MONO }}/sdks/dotnet-pca/AtlasPca.Corpus.Tests
+        env:
+          FILES: ${{ matrix.files }}
+          FILTER: ${{ matrix.filter }}
+          PCA_RUNERR_LOG: ${{ runner.temp }}/runerr-stryker.log
+        run: |
+          set -o pipefail
+          dotnet tool install -g dotnet-stryker --version 4.14.2
+          SDK8="$(dotnet --list-sdks | awk '/^8\./ { v = $1 } END { print v }')"
+          [ -n "$SDK8" ] || { echo "::error::no .NET 8 SDK"; exit 1; }
+          (cd .. && dotnet new globaljson --sdk-version "$SDK8" --roll-forward disable --force >/dev/null)
+          # a mutant run needs a green baseline: the filtered oracle must pass on the unmutated source
+          dotnet test -c Release --filter "$FILTER" > "$RUNNER_TEMP/baseline.log" 2>&1 || { tail -40 "$RUNNER_TEMP/baseline.log"; echo "::error::the Windows oracle ($FILTER) fails on the unmutated source"; exit 1; }
+          [ ! -s "$PCA_RUNERR_LOG" ] || { cat "$PCA_RUNERR_LOG"; echo "::error::the unmutated source hits OutOfMemoryException"; exit 1; }
+          # the core shards' settings, but only the corpus project as oracle and only the tests that reach the file
+          python - <<'PY'
+          import json, os
+          s = open("AtlasPca.Corpus.Tests.csproj").read()
+          cap = '<ItemGroup><RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="3221225472" /></ItemGroup>'
+          assert "</Project>" in s
+          open("AtlasPca.Corpus.Tests.csproj", "w").write(s.replace("</Project>", cap + "\n</Project>"))
+          c = json.load(open("stryker-config.json"))
+          c["stryker-config"].update({"test-projects": ["AtlasPca.Corpus.Tests.csproj"], "test-case-filter": os.environ["FILTER"]})
+          json.dump(c, open("stryker-config.json", "w"))
+          f = os.environ["FILES"]
+          n = len(open("../" + f, encoding="utf-8").read().split("\n"))
+          json.dump({f: [1, n]}, open(os.environ["RUNNER_TEMP"] + "/scope.json", "w"))
+          PY
+          touch "$RUNNER_TEMP/stryker-ran"
+          dotnet stryker --config-file stryker-config.json --concurrency 4 --mutate "**/$FILES" 2>&1 | grep -vE '^\s*$' | tee "$RUNNER_TEMP/stryker.out" | tail -30
+      - name: Report (+ every in-scope CompileError tested alone)
+        env:
+          FILTER: ${{ matrix.filter }}
+        run: |
+          S="$GITHUB_WORKSPACE/.github/scripts"; D="$MONO/sdks/dotnet-pca"
+          REP="$(ls -d "$D"/AtlasPca.Corpus.Tests/StrykerOutput/*/reports/mutation-report.json | tail -1)"
+          python "$S/stryker-report.py" collect --scope "$RUNNER_TEMP/scope.json" --all "$RUNNER_TEMP/all.json" --retest "$RUNNER_TEMP/retest.json" \
+            --runerr-log "$RUNNER_TEMP/runerr-stryker.log" --report "$REP"
+          if [ "$(python -c 'import json,sys; print(len(json.load(open(sys.argv[1]))))' "$RUNNER_TEMP/retest.json")" -gt 0 ]; then
+            python "$S/stryker-isolate.py" --src "$D" --mutants "$RUNNER_TEMP/retest.json" --out "$RUNNER_TEMP/isolated.json" \
+              --tests AtlasPca.Corpus.Tests --dirs AtlasPca --filter "$FILTER" \
+              --jobs 4 --stop-on-fail --deadline $((JOB_START + 100 * 60)) > "$RUNNER_TEMP/isolate.log" 2>&1 || { tail -80 "$RUNNER_TEMP/isolate.log"; echo "::error::stryker-isolate.py failed"; exit 1; }
+            tail -30 "$RUNNER_TEMP/isolate.log"
+          fi
+          python "$S/stryker-report.py" finish --all "$RUNNER_TEMP/all.json" --isolated "$RUNNER_TEMP/isolated.json" \
+            --sources "$GITHUB_WORKSPACE" --scope "$RUNNER_TEMP/scope.json" --counts counts.json \
+            --survivors survivors.json --baseline stryker-baseline.json --runerrors run-errors-win-${{ matrix.n }}.json \
+            --ledger "$MONO/sdks/dotnet-pca/mutation-run-errors.json" --killed killed-win-${{ matrix.n }}.json
+          node .github/scripts/mutation-shard-report.mjs --crate="$CRATE" --shard=${{ matrix.n }} --of="$SHARDS" --tool=stryker-net \
+            --counts=counts.json --survivors=survivors.json --scope="${{ matrix.files }}" --out=winshard-${{ matrix.n }}.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: winshard-${{ matrix.n }}
+          path: winshard-${{ matrix.n }}.json
+      # the run-error gate (merge job) lists the Linux shards only: a Windows run error would have no ledger entry to prove it mutant-caused
+      - name: No run errors, every mutant tested
+        run: |
+          n="$(python -c 'import json; c = json.load(open("counts.json")); print(c.get("Untested", 0) + c.get("Ignored", 0))')"
+          [ "$n" = 0 ] || { echo "::error::$n mutant(s) left untested by the time budget"; exit 1; }
+          e="$(python -c 'import json; print(len(json.load(open("run-errors-win-${{ matrix.n }}.json"))))')"
+          [ "$e" = 0 ] || { cat run-errors-win-${{ matrix.n }}.json; echo "::error::$e Windows run error(s): not ledgered (the run-error gate lists the Linux shards)"; exit 1; }
 
   merge:
-    needs: shard
-    if: always()
+    needs: [reuse, shard, shard-b, shard-c, module-shard, winshard]
+    if: ${{ needs.reuse.outputs.skip != 'true' && (always()) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -172,9 +943,39 @@ jobs:
         run: >
           node .github/scripts/mutation-merge.mjs --crate="$CRATE" --shards="$SHARDS" --reports=reports
           --checker="$MONO/tools/pca-audit" --src="$GITHUB_WORKSPACE"
+      # gate honesty: a RunError or Timeout mutant was "caught" by no assertion (test host crashed / aborted, every failing test hit
+      # OutOfMemoryException under the 3 GiB heap cap, or the run passed Stryker's limit: the baseline time plus 60 s,
+      # additional-timeout in stryker-config.json). Each must be in sdks/dotnet-pca/mutation-run-errors.json with a
+      # per-mutant reason that the mutant itself caused it (the unmutated suite passes under the same cap, checked in every
+      # shard); an unlisted one, a missing shard list, or a stale entry fails.
+      - name: Run errors are each proven mutant-caused
+        if: ${{ !cancelled() }}
+        run: |
+          node .github/scripts/run-error-gate-check.mjs
+          node .github/scripts/run-error-gate.mjs --reports=reports --ledger="$MONO/sdks/dotnet-pca/mutation-run-errors.json" --src="$MONO/sdks/dotnet-pca" --shards="$SHARDS"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: survivors-merged
           path: reports/survivors-merged.json
           if-no-files-found: ignore
+
+  reuse-record:
+    name: reuse record
+    needs: [reuse, natives, shard, shard-b, shard-c, module-shard, winshard, merge]
+    # only a run whose jobs all passed (skipped by their own conditions is fine), that was not partial and not itself a reuse, leaves a record
+    if: ${{ !cancelled() && needs.reuse.outputs.skip != 'true' && needs.reuse.outputs.hash != '' && !(false) && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') && needs.merge.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - id: rec
+        env:
+          GATE_FULL: ${{ inputs.full || (startsWith(github.ref_name, 'ci/') && endsWith(github.ref_name, '-rc') || startsWith(github.ref_name, 'ci/gate-')) || contains(github.event.head_commit.message, '[force-full]') }}
+          HASH: ${{ needs.reuse.outputs.hash }}
+        run: node .github/scripts/ci-reuse.mjs record --workflow=mutation --hash="$HASH" --out="$RUNNER_TEMP/reuse-record"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.rec.outputs.artifact }}
+          path: ${{ runner.temp }}/reuse-record/
+          retention-days: 21

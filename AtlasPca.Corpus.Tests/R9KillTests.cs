@@ -103,16 +103,17 @@ public class R9KillTests
             foreach (var d in new[] { Build(at), Path.Combine(at.FullName, "sdks", "pca-less-c"), Path.Combine(at.FullName, "sdks") })
                 try { if (Directory.Exists(d) && !Directory.EnumerateFileSystemEntries(d).Any()) Directory.Delete(d); } catch { }
         }
+        // the package copies (beside the app, under runtimes) come first; what this pins is the search of the build directories
+        IEnumerable<string> BuildCandidates() => LessNative.Candidates().Where(p => p.Contains(Path.Combine("sdks", "pca-less-c")));
         string[] Names(DirectoryInfo at) => new[] { "libatlas_less.so", "libatlas_less.dylib", "atlas_less.dll" }.Select(n => Path.Combine(Build(at), n)).ToArray();
         try
         {
             Environment.SetEnvironmentVariable("ATLAS_PCA_LIBLESS", null);
             Make(parent);   // only an ancestor has a build directory: the (missing) one next to the binaries is skipped
-            Assert.Equal(Names(parent), LessNative.Candidates().Take(3).ToArray());
+            Assert.Equal(Names(parent), BuildCandidates().ToArray());
             Make(baseDir);  // now the nearest one wins and the search stops there
-            var both = LessNative.Candidates().ToArray();
-            Assert.Equal(Names(baseDir), both.Take(3).ToArray());
-            Assert.Equal(3, both.Length);
+            var both = BuildCandidates().ToArray();
+            Assert.Equal(Names(baseDir), both);
         }
         finally
         {
@@ -174,9 +175,8 @@ public class R9KillTests
 
     // ---- LessNative.Load: a library only counts when it reports exactly the less-252-45 sizes and exports verify ---------------
 
-    /// <summary>GATED (run once on the box, see tools/pca-audit/native-mutation-equivalents.json: LessNative.cs:53): it needs the
-    /// directory of fake libraries built by sdks/dotnet-pca/AtlasPca.Corpus.Tests/test-data/fake-less/build.sh, exported as
-    /// ATLAS_PCA_FAKELESS_DIR; without it the test returns immediately (CI has no fake libraries).</summary>
+    /// <summary>Needs the directory of fake libraries built by test-data/fake-less/build.sh, exported as ATLAS_PCA_FAKELESS_DIR
+    /// (CI and the mutation run build them on Linux / macOS; without it, i.e. on Windows, the test returns immediately).</summary>
     [Fact]
     public void LoadRefusesALibraryWithOtherSizesOrNoVerifyExport()
     {

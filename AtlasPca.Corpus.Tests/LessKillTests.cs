@@ -60,11 +60,16 @@ public class LessKillTests
             var withEnv = LessNative.Candidates().ToList();
             Assert.Equal(new[] { "/x/one", "/y/two" }, withEnv.Take(2));
             Assert.Equal(none, withEnv.Skip(2).ToList());
-            if (none.Count > 0)
+            // order: the packaged copy (runtimes/<rid>/native, then beside the app), then the repository build directory when found
+            var packaged = none.Take(6).ToList();
+            Assert.All(packaged, p => Assert.StartsWith(AppContext.BaseDirectory, p));
+            Assert.Equal(3, packaged.Count(p => p.Contains(Path.Combine("runtimes", ""))));
+            var repo = none.Skip(6).ToList();
+            if (repo.Count > 0)
             {
-                Assert.Equal(3, none.Count);
-                Assert.Equal(new[] { "libatlas_less.so", "libatlas_less.dylib", "atlas_less.dll" }, none.Select(Path.GetFileName));
-                Assert.All(none, p => Assert.EndsWith(Path.Combine("sdks", "pca-less-c", "build", Path.GetFileName(p)!), p));
+                Assert.Equal(3, repo.Count);
+                Assert.Equal(new[] { "libatlas_less.so", "libatlas_less.dylib", "atlas_less.dll" }, repo.Select(Path.GetFileName));
+                Assert.All(repo, p => Assert.EndsWith(Path.Combine("sdks", "pca-less-c", "build", Path.GetFileName(p)!), p));
             }
         }
         finally { Environment.SetEnvironmentVariable("ATLAS_PCA_LIBLESS", old); }

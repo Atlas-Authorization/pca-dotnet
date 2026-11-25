@@ -1,0 +1,54 @@
+name: Ada IDNA
+
+# CIBA word IDNA and the URL parsers' hosts (Jose and Oauth WhatwgUrl) on Ada (ada-url/ada, the parser Node's URL uses): libatlasada is built here from the pinned single-file release (SHA-256 verified) plus the
+# C shim in native/ada, then the shim corpus and the CIBA corpora replay on it. Without the library a host needing IDNA is refused (the built-in
+# approximation is opt-in), so this is the job that proves the reference's A-labels.
+on:
+  push:
+    branches: [main, 'ci/**']
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  ADA_TAG: v4.0.0
+  ADA_CPP_SHA256: 1c722f8f5355d6bf2bf3601870684edc875aa8f56b4d4735440d96263dd0207c
+  ADA_H_SHA256: 0010b17b3ff489e13998e86d921b16e1643e370ee3276c584f1b0c4b72bdf628
+
+jobs:
+  ada:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: RSA DPoP oracle corpus (generated, never committed)
+        shell: bash
+        run: .github/scripts/dpop-rsa-corpus.sh "$PCA_MONO_SDK/AtlasPca.Corpus.Tests/test-data/ref-dpop-rsa.json.gz"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: libatlasada (Ada amalgamation + C shim)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          echo "ATLAS_PCA_LIBADA=$(bash native/ada/build.sh "$RUNNER_TEMP/ada" | tail -1)" >> "$GITHUB_ENV"
+          echo "ATLAS_PCA_ADA_REQUIRED=1" >> "$GITHUB_ENV"
+      - name: Shim corpus and refusal policy
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Ada.Tests/AtlasPca.Ada.Tests.csproj -c Release
+      - name: CIBA and URL corpora on Ada (asciiForm, binding messages, WHATWG hosts of the Jose and Oauth parsers)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Corpus.Tests/AtlasPca.Corpus.Tests.csproj -c Release --filter "FullyQualifiedName~RefCibaTests|FullyQualifiedName~RefOauthTests|FullyQualifiedName~RefVcTests|FullyQualifiedName~RefDpopTests|FullyQualifiedName~RefWebBotAuthTests|FullyQualifiedName~RefAgentCardTests|FullyQualifiedName~RefOidcTests|FullyQualifiedName~RefConnectorsTests"

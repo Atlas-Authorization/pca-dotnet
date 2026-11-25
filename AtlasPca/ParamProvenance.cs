@@ -17,20 +17,23 @@ public static class ParamProvenance
     public const int MaxProvPaths = 32;
     public const int MaxProvRefs = 8;
     public const int MaxCommittedLabels = 16;
-    static readonly Regex ProvPathRe = new(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
-    static readonly HashSet<string> ProtoNames = new() { "__proto__", "constructor", "prototype" };
-    internal static readonly string[] TaintLevels = { "trusted", "first_party", "tool", "web", "agent" };
-    static readonly string[] Modes = { "allow", "question", "question_typed", "deny" };
+    static Regex ProvPathRe => Rx.Get(@"^action\.params\.[A-Za-z0-9_]{1,64}\z", RegexOptions.CultureInvariant);
+    static HashSet<string> ProtoNames => new() { "__proto__", "constructor", "prototype" };
+    public static string[] TaintLevels => new string[] { "trusted", "first_party", "tool", "web", "agent" };
+    static string[] Modes => new string[] { "allow", "question", "question_typed", "deny" };
     const int TaintedRank = 2;
 
     /// <summary>The rule-17 verdict. <c>Labels</c>: classified path to level; <c>Classes</c>: path to sorted class list; <c>Env</c>: nested labels.</summary>
     public sealed record ProvResult(string Outcome, string? Reason, string? Friction, D Labels, D Classes, D Env);
 
-    internal static bool IsTaintLevel(object? k) => k is string s && TaintLevels.Contains(s);
-    internal static int Rank(object? level) => IsTaintLevel(level) ? Array.IndexOf(TaintLevels, (string)level!) : 4;
-    static bool IsProvPath(string k) => ProvPathRe.IsMatch(k) && !ProtoNames.Contains(k.Substring("action.params.".Length));
+    internal static bool IsTaintLevel(object? k) => IsTaintLevel(k, TaintLevels);
+    internal static bool IsTaintLevel(object? k, string[] levels) => k is string s && levels.Contains(s);
+    internal static int Rank(object? level) => Rank(level, TaintLevels);
+    internal static int Rank(object? level, string[] levels) => IsTaintLevel(level, levels) ? Array.IndexOf(levels, (string)level!) : 4;
+    static bool IsProvPath(string k) => IsProvPath(k, ProvPathRe, ProtoNames);
+    static bool IsProvPath(string k, Regex provPathRe, HashSet<string> protoNames) => provPathRe.IsMatch(k) && !protoNames.Contains(k.Substring("action.params.".Length));
 
-    internal static string? ValidateLabelsWire(object? lo)
+    public static string? ValidateLabelsWire(object? lo)
     {
         if (lo is not D l) return "label receipt must be an object";
         var m = IntentArtifacts.ClosedMembers(l, new[] { "v", "kind", "site", "session", "response_digest", "fields", "issued_at", "kid", "sig" }, IntentArtifacts.SuiteMembers, "labels");
@@ -41,12 +44,13 @@ public static class ParamProvenance
         if (!IntentArtifacts.IsDigest(l["response_digest"])) return "'labels.response_digest' must be canonical base64url (32 bytes)";
         if (l["fields"] is not D fields) return "'labels.fields' must be an object";
         if (fields.Count == 0 || fields.Count > MaxLabelFields) return $"'labels.fields' must hold 1..{MaxLabelFields} fields";
+        var dataClassRe = IntentArtifacts.DataClassRe;
         foreach (var (k, f) in fields)
         {
             if (!IntentArtifacts.IsBoundedString(k, 256)) return "label field paths must be non-empty strings (<= 256 bytes)";
             if (f is not D fd || IntentArtifacts.ClosedMembers(fd, new[] { "class", "value_digest" }, Array.Empty<string>(), "object") != null)
                 return $"label field '{k}' must be exactly {{class, value_digest}}";
-            if (fd["class"] is not string cls || cls.Length > 128 || !IntentArtifacts.DataClassRe.IsMatch(cls)) return $"label field '{k}': invalid data class";
+            if (fd["class"] is not string cls || cls.Length > 128 || !dataClassRe.IsMatch(cls)) return $"label field '{k}': invalid data class";
             if (!IntentArtifacts.IsDigest(fd["value_digest"])) return $"label field '{k}': value_digest must be canonical base64url (32 bytes)";
         }
         if (!IntentJs.IsNonNeg(l["issued_at"])) return "'labels.issued_at' must be a non-negative safe integer";
@@ -57,7 +61,7 @@ public static class ParamProvenance
 
     public static string LabelsRef(D l) => IntentArtifacts.ArtifactRef(LabelsRefDomain, "l", l);
 
-    internal static string? VerifyLabels(object? l, L keys)
+    public static string? VerifyLabels(object? l, L keys)
     {
         var w = ValidateLabelsWire(l);
         if (w != null) return w;
@@ -70,7 +74,7 @@ public static class ParamProvenance
     }
 
     /// <summary>The most specific flow pattern for <paramref name="cls"/>: itself, else the longest <c>p.*</c> prefix, else <c>*</c>.</summary>
-    internal static string? FlowRuleFor(D rules, string cls)
+    public static string? FlowRuleFor(D rules, string cls)
     {
         if (rules.ContainsKey(cls)) return cls;
         string? best = null;
@@ -84,7 +88,7 @@ public static class ParamProvenance
         return rules.ContainsKey("*") ? "*" : null;
     }
 
-    internal static bool FlowAllowed(D rules, string cls, string origin, string? aud)
+    public static bool FlowAllowed(D rules, string cls, string origin, string? aud)
     {
         if (aud == origin || cls == PublicClass) return true;
         var p = FlowRuleFor(rules, cls);
@@ -92,13 +96,14 @@ public static class ParamProvenance
         return rules[p] is L sinks && sinks.Any(x => x is string xs && xs == aud);
     }
 
-    internal static string? ValidateFlowRules(object? rules)
+    public static string? ValidateFlowRules(object? rules)
     {
         if (rules is not D r) return "flows must be an object";
+        var dataClassRe = IntentArtifacts.DataClassRe;
         foreach (var (p, sinks) in r)
         {
             var b = p == "*" ? "x" : p.EndsWith(".*", StringComparison.Ordinal) ? p[..^2] : p;
-            if (!IntentArtifacts.DataClassRe.IsMatch(b)) return $"flow pattern '{p}' is not a class, a 'prefix.*' or '*'";
+            if (!dataClassRe.IsMatch(b)) return $"flow pattern '{p}' is not a class, a 'prefix.*' or '*'";
             if (sinks is not L sl || sl.Any(s => !IntentArtifacts.IsBoundedString(s, 256))) return $"flow pattern '{p}' needs a list of audiences";
         }
         return null;
@@ -117,7 +122,8 @@ public static class ParamProvenance
         if (p.ContainsKey("registry"))
         {
             if (p["registry"] is not D reg) return "registry must be an object";
-            foreach (var (k, v) in reg) if (!IntentArtifacts.IsBoundedString(k, 256) || !IsTaintLevel(v)) return $"registry entry '{k}' must map to a taint level";
+            var taintLevels = TaintLevels;
+            foreach (var (k, v) in reg) if (!IntentArtifacts.IsBoundedString(k, 256) || !IsTaintLevel(v, taintLevels)) return $"registry entry '{k}' must map to a taint level";
         }
         if (p.ContainsKey("label_keys"))
         {
@@ -142,9 +148,11 @@ public static class ParamProvenance
     {
         if (prov is not D m) return "'prov' must be an object";
         if (m.Count > MaxProvPaths) return $"'prov' holds more than {MaxProvPaths} paths";
+        var provPathRe = ProvPathRe;
+        var protoNames = ProtoNames;
         foreach (var (k, refs) in m)
         {
-            if (!IsProvPath(k)) return $"'prov' key '{k}' is not action.params.<name> ([A-Za-z0-9_]{{1,64}}, not a prototype name)";
+            if (!IsProvPath(k, provPathRe, protoNames)) return $"'prov' key '{k}' is not action.params.<name> ([A-Za-z0-9_]{{1,64}}, not a prototype name)";
             if (refs is not L rl || rl.Count == 0 || rl.Count > MaxProvRefs) return $"'prov.{k}' must hold 1..{MaxProvRefs} refs";
             foreach (var r in rl) if (!IntentArtifacts.IsBoundedString(r, 256)) return $"'prov.{k}' refs must be non-empty strings (<= 256 bytes)";
         }
@@ -215,6 +223,7 @@ public static class ParamProvenance
             var audText = IntentRevocation.JsText(IntentJs.Get(input, "aud"), input.ContainsKey("aud"));
             var origins = new Dictionary<string, List<(string Cls, string Origin)>>();
 
+            var taintLevels = TaintLevels;
             foreach (var p in paths)
             {
                 var value = IntentArtifacts.ResolveParamPath(parameters, p).Value;
@@ -224,7 +233,7 @@ public static class ParamProvenance
                     var reference = (string)refO!;
                     if (!reference.StartsWith(LabelRefPrefix, StringComparison.Ordinal))
                     {
-                        join = Math.Max(join, reg.TryGetValue(reference, out var lv) && IsTaintLevel(lv) ? Rank(lv) : 4);
+                        join = Math.Max(join, reg.TryGetValue(reference, out var lv) && IsTaintLevel(lv, taintLevels) ? Rank(lv, taintLevels) : 4);
                         continue;
                     }
                     var lr = ParseLabelRef(reference);
@@ -243,7 +252,7 @@ public static class ParamProvenance
                     if (!origins.TryGetValue(p, out var ol)) origins[p] = ol = new();
                     ol.Add(((string)field["class"]!, (string)rc["site"]!));
                 }
-                labels[p] = TaintLevels[join < 0 ? 4 : join];
+                labels[p] = taintLevels[join < 0 ? 4 : join];
             }
             var sens = (D)policy["params"]!;
             foreach (var p in Sorted(sens.Keys))
@@ -263,12 +272,12 @@ public static class ParamProvenance
             int capRank = Rank(IntentJs.Opt(policy, "critical_max", "agent"));
             var labelled = Sorted(labels.Keys);
             foreach (var p in labelled)
-                if (sens.TryGetValue(p, out var sv) && sv as string == "critical" && Rank(labels[p]) > capRank)
+                if (sens.TryGetValue(p, out var sv) && sv as string == "critical" && Rank(labels[p], taintLevels) > capRank)
                     return Deny($"critical parameter '{p}' has provenance '{labels[p]}', above the policy maximum '{IntentJs.Get(policy, "critical_max")}'");
             bool question = false, typed = false;
             foreach (var p in labelled)
             {
-                if (!sens.TryGetValue(p, out var s) || s == null || Rank(labels[p]) < TaintedRank) continue;
+                if (!sens.TryGetValue(p, out var s) || s == null || Rank(labels[p], taintLevels) < TaintedRank) continue;
                 var mode = s as string == "critical" ? IntentJs.Opt(policy, "critical_tainted", "question_typed") as string : IntentJs.Opt(policy, "material_tainted", "question") as string;
                 if (mode == "deny") return Deny($"tainted {s} parameter '{p}' (provenance '{labels[p]}') is denied by policy");
                 if (mode == "question" || mode == "question_typed") question = true;

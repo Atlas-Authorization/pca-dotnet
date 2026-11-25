@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Pairing-based PCA packages (BLS signature aggregation, BBS, ABE) on BLS12-381. A separate assembly so the core library gains no native dependency.
+       All curve and pairing work is supranational blst through its official C# binding, which CI copies from the pinned blst source to Blst/blst.cs
+       (see Native/build.sh); ABE's GT operations are Native/pca_gt.c, compiled into the same native library. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AtlasPca</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>true</IsPackable>
+    <Version>0.6.0</Version>
+    <Description>Pairing-based PCA packages (BLS signature aggregation, BBS, ABE) on BLS12-381, with the blst native library for every supported platform.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+  </ItemGroup>
+  <Target Name="RequireBlstBinding" BeforeTargets="CoreCompile" Condition="!Exists('$(MSBuildProjectDirectory)/Blst/blst.cs')">
+    <Error Text="Blst/blst.cs is missing: run Native/build.sh (it copies the official binding from the pinned blst source)." />
+  </Target>
+  <!-- The native libraries ship per RID in runtimes/<rid>/native (built by the native-package workflow). PackNativeRequired=true (the release job) makes a pack without all of them fail. -->
+  <ItemGroup>
+    <None Include="runtimes/**/native/*" Pack="true" PackagePath="%(Identity)" Visible="false" />
+  </ItemGroup>
+  <Target Name="RequireNatives" BeforeTargets="_GetPackageFiles" Condition="'$(PackNativeRequired)' == 'true'">
+    <ItemGroup>
+      <_Native Include="runtimes/linux-x64/native/libblst.dll.so;runtimes/linux-arm64/native/libblst.dll.so;runtimes/osx-x64/native/libblst.dll.dylib;runtimes/osx-arm64/native/libblst.dll.dylib;runtimes/win-x64/native/blst.dll" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_Native.Identity)')" Text="native library missing from the package inputs: %(_Native.Identity)" />
+  </Target>
+</Project>

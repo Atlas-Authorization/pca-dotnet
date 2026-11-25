@@ -126,7 +126,7 @@ public static class OracleFacts
         return null;
     }
 
-    internal static string? ValidateOfferPolicy(object? po)
+    public static string? ValidateOfferPolicy(object? po)
     {
         if (po is not D p) return "offers policy must be an object";
         var cm = IntentArtifacts.ClosedMembers(p, new[] { "name", "site_keys", "max_age_ms", "offer_param", "filter" }, Array.Empty<string>(), "offers");
@@ -154,9 +154,9 @@ public static class OracleFacts
         NonEmpty(IntentJs.Get(committed, "facts")) || IntentJs.Get(committed, "offer_set") is string
         || NonEmpty(IntentJs.Get(policy, "worlds")) || NonEmpty(IntentJs.Get(policy, "relational")) || IntentJs.Get(policy, "offers") is D;
 
-    static object? Prop(object? o, string k) => o == null ? throw new ArgumentException("cannot read '" + k + "' of null") : IntentJs.Get(o, k);
+    internal static object? Prop(object? o, string k) => o == null ? throw new ArgumentException("cannot read '" + k + "' of null") : IntentJs.Get(o, k);
 
-    static string? SubjectOf(object? action, string path)
+    internal static string? SubjectOf(object? action, string path)
     {
         if (path == "action.resource") return Prop(action, "resource") as string;
         if (path == "action.verb") return Prop(action, "verb") as string;
@@ -282,7 +282,7 @@ public static class OracleFacts
     }
 
     /// <summary><c>input.action.params</c> (absent = {}); a missing action or a present non-object params fails closed.</summary>
-    static D ActionParamsOf(D input) =>
+    internal static D ActionParamsOf(D input) =>
         IntentArtifacts.ActionParams(IntentJs.Get(input, "action") ?? throw new ArgumentException("no action"));
 
     static long? Operand(D world, D input, string path)
@@ -296,7 +296,7 @@ public static class OracleFacts
         return r.Found && IntentJs.IsInt(r.Value) ? IntentJs.Lng(r.Value) : null;
     }
 
-    internal static string? ValidateOfferSetWire(object? oo)
+    public static string? ValidateOfferSetWire(object? oo)
     {
         if (oo is not D o) return "offer set must be an object";
         var m = IntentArtifacts.ClosedMembers(o, new[] { "v", "kind", "site", "session", "query", "rank", "complete", "offers", "issued_at", "kid", "sig" }, IntentArtifacts.SuiteMembers, "offer_set");
@@ -326,8 +326,8 @@ public static class OracleFacts
         return null;
     }
 
-    internal static bool OfferMatches(D offer, D f) => f.All(e => offer.TryGetValue(e.Key, out var v) && IntentArtifacts.ScalarEq(v, e.Value));
-    internal static bool QueryCovers(D query, D fq) => query.All(e => fq.TryGetValue(e.Key, out var v) && IntentArtifacts.ScalarEq(v, e.Value));
+    public static bool OfferMatches(D offer, D f) => f.All(e => offer.TryGetValue(e.Key, out var v) && IntentArtifacts.ScalarEq(v, e.Value));
+    public static bool QueryCovers(D query, D fq) => query.All(e => fq.TryGetValue(e.Key, out var v) && IntentArtifacts.ScalarEq(v, e.Value));
 
     /// <summary>(reason, 0) on failure, (null, excess) on success.</summary>
     internal static (string? Why, long Excess) DecideOfferSet(D policy, string? committed, bool supplied, object? o, D parameters, object? aud,
@@ -350,8 +350,8 @@ public static class OracleFacts
         if (!Equals(os["session"], session)) return ("offers: the offer set is bound to another session", 0);
         if (!clock) return ("offers: no usable clock (now must be a safe integer): the offer set counts as stale", 0);
         double issued = IntentJs.NumOf(os["issued_at"])!.Value;
-        if (issued > now + skewMs) return ("offers: the offer set is issued in the future", 0);
-        if (now - issued > IntentJs.NumOf(policy["max_age_ms"])!.Value) return ("offers: the offer set is stale", 0);
+        if (!(issued <= now + skewMs)) return ("offers: the offer set is issued in the future", 0);
+        if (!(now - issued <= IntentJs.NumOf(policy["max_age_ms"])!.Value)) return ("offers: the offer set is stale", 0);
         if (os["complete"] is not true) return ("offers: the offer set is not declared complete", 0);
         var filter = (D)policy["filter"]!;
         if (!QueryCovers((D)os["query"]!, (D)filter["query"]!)) return ("offers: the search was narrowed beyond the intent filter (coverage)", 0);

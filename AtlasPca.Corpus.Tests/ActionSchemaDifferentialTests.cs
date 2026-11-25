@@ -14,7 +14,8 @@ namespace AtlasPca.Corpus.Tests;
 /// message is language-specific, so a "malformed schema: " reason is compared by prefix.</summary>
 public class ActionSchemaDifferentialTests
 {
-    static readonly Lazy<D> Data = new(() => (D)Pca.ParseJson(File.ReadAllText(Path.Combine(Dir(), "k042-actionschema.json")))!);
+    static readonly Lazy<string> DataText = new(() => File.ReadAllText(Path.Combine(Dir(), "k042-actionschema.json"))); // raw text only; parsed per access
+    static D Data => (D)Pca.ParseJson(DataText.Value)!;
     static string Dir()
     {
         var d = AppContext.BaseDirectory;
@@ -25,11 +26,9 @@ public class ActionSchemaDifferentialTests
         }
         throw new FileNotFoundException("test-data/k042-actionschema.json");
     }
-    static L Cases(string k) => (L)Data.Value[k]!;
+    static L Cases(string k) => (L)Data[k]!;
     static object? J(object? raw) => IntentJs.Normalize(Pca.ParseJson((string)raw!));
-    static string? Reason(string? ts) => ts == null ? null : Regex.Replace(Regex.Replace(Regex.Replace(Regex.Replace(ts,
-        @"longer than \d+ UTF-8 bytes$", "longer than the declared max_len"), @"below min -?\d+$", "below min"), @"above max -?\d+$", "above max"),
-        @"array items must be strings of at most \d+ UTF-8 bytes$", "array items must be strings within max_len UTF-8 bytes");
+    static string? Reason(string? ts) => ts; // the native now words these refusals exactly as the reference (the byte limit and the bound are named)
     static void Report(List<string> bad, int n) { if (bad.Count > 0) Assert.Fail($"{bad.Count}/{n} mismatches:\n" + string.Join("\n", bad.Take(60))); }
     static string? Str(object? o) => o as string;
 

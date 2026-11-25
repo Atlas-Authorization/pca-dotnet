@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Replays the cross-implementation FN-DSA vectors (test-data/ref-fndsa-kat.json) through AtlasPca.Fndsa over libfndsa (ATLAS_PCA_LIBFNDSA, or beside the test assembly).
+       ATLAS_PCA_LIBFNDSA_REQUIRED=1 makes a missing library fail instead of skip. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+    <ProjectReference Include="../AtlasPca.Fndsa/AtlasPca.Fndsa.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="test-data/**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

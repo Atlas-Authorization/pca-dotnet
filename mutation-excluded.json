@@ -1,0 +1,6 @@
+[
+ {
+  "path": "AtlasPca/GoalKernel/Generated",
+  "reason": "generated code, not ours: the Dafny C# translation of the proved goal kernel (formal/dafny/Goal.dfy) together with the Dafny runtime, written by formal/dafny/build-native.sh and byte-compared with a fresh translation in CI, so a mutant of it could only be killed by testing Dafny itself. Its correctness is the Dafny proof plus the replay of the kernel tape corpus; the hand-written bridge (AtlasPca/GoalKernel/GoalKernel.cs) is mutated like the rest of the SDK."
+ }
+]
