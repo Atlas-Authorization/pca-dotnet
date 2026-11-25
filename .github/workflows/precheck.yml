@@ -1,0 +1,84 @@
+name: Precheck
+
+# Compile-only gate, dotnet build of the solution and of every project, tests included.
+# Runs only on pre/** pushes (and by hand): it builds and typechecks everything, tests included, and runs no test.
+# Push pre/<version> first and the full ci/** run only when this is green.
+on:
+  push:
+    branches: ['pre/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BLST_TAG: v0.3.16
+  DOTNET_NOLOGO: '1'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+
+jobs:
+  precheck:
+    name: build every project (tests included, none run)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca --less
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: RSA DPoP oracle corpus (generated, never committed)
+        shell: bash
+        run: .github/scripts/dpop-rsa-corpus.sh "$PCA_MONO_SDK/AtlasPca.Corpus.Tests/test-data/ref-dpop-rsa.json.gz"
+      - name: Secret-key oracle corpora (generated, never committed)
+        shell: bash
+        run: |
+          D() { echo "$PCA_MONO_SDK/$1/test-data"; }
+          .github/scripts/gen-secret-corpus.sh "$(D AtlasPca.Corpus.Tests)" oprf:oprf core-frost-java:core-frost-java attest-eat:attest-eat frost-dkg:frost-dkg
+          .github/scripts/gen-secret-corpus.sh "$(D AtlasPca.Mpc.Tests)" mpc-ot:mpc-ot
+          .github/scripts/gen-secret-corpus.sh "$(D AtlasPca.Pairing.Tests)" abe:abe
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+      - uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-precheck-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+          restore-keys: nuget-precheck-
+      # the pairing project compiles the official blst binding, which its build script copies from the pinned source
+      - name: blst at the pinned tag, the C# binding and the native library
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          git clone --quiet --depth 1 --branch "$BLST_TAG" https://github.com/supranational/blst "$RUNNER_TEMP/blst"
+          AtlasPca.Pairing/Native/build.sh "$RUNNER_TEMP/blst" AtlasPca.Pairing.Tests/native
+      - name: Solution
+        id: c0
+        continue-on-error: true
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet build dotnet-pca.slnx -c Release
+      # projects the solution does not list (opt-in modules, examples) are built on their own; already built ones are up to date
+      - name: Every project
+        id: c1
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          rc=0
+          for p in $(find . -name '*.csproj' -not -path '*/obj/*' -not -path '*/bin/*' | sort); do
+            echo "::group::$p"; dotnet build "$p" -c Release || { echo "::error::$p failed"; rc=1; }; echo "::endgroup::"
+          done
+          exit $rc
+      # every check above runs even when an earlier one failed; this step makes the job red when any did
+      - name: Summary
+        if: ${{ always() && (steps.c0.outcome == 'failure' || steps.c1.outcome == 'failure') }}
+        run: |
+          echo "::error::one or more compile checks failed; each failing step above has the details"
+          exit 1

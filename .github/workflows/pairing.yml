@@ -1,0 +1,47 @@
+name: Pairing packages
+
+# pca-aggsig, pca-bbs and pca-abe on BLS12-381 (AtlasPca.Pairing). Curve and pairing work is supranational blst through its official C# binding;
+# ABE's GT operations are a small shim over blst's public API. Both are built here from the pinned blst source into one native library.
+on:
+  push:
+    branches: [main, 'ci/**']
+    tags: ['*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  BLST_TAG: v0.3.16
+
+jobs:
+  pairing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Secret-key oracle corpus (abe; generated, never committed)
+        run: .github/scripts/gen-secret-corpus.sh "$PCA_MONO_SDK/AtlasPca.Pairing.Tests/test-data" abe:abe
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - name: blst at the pinned tag, the C# binding and the native library (blst + GT shim)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          git clone --quiet --depth 1 --branch "$BLST_TAG" https://github.com/supranational/blst "$RUNNER_TEMP/blst"
+          AtlasPca.Pairing/Native/build.sh "$RUNNER_TEMP/blst" AtlasPca.Pairing.Tests/native
+      - name: aggsig, bbs and abe (vendored vectors, the reference corpora)
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: dotnet test AtlasPca.Pairing.Tests/AtlasPca.Pairing.Tests.csproj -c Release

@@ -9,7 +9,7 @@ namespace AtlasPca.Corpus.Tests;
 /// deny, never an exception (R6-05).</summary>
 public class R6Tests
 {
-    static readonly HashSet<string> Supported = new(Pq.SupportedSuites()); // the capability manifest (SUITES.md)
+    static HashSet<string> Supported => new(Pq.SupportedSuites()); // the capability manifest (SUITES.md)
 
     static string Dir()
     {
@@ -22,20 +22,21 @@ public class R6Tests
         throw new InvalidOperationException("conformance dir not found");
     }
 
-    static readonly Lazy<Dictionary<string, object?>> Prim = new(() =>
-        (Dictionary<string, object?>)((Dictionary<string, object?>)Pca.ParseJson(File.ReadAllText(Path.Combine(Dir(), "vectors.json")))!)["primitives"]!);
+    static readonly string PrimText = File.ReadAllText(Path.Combine(Dir(), "vectors.json"));
+    static Dictionary<string, object?> Prim => (Dictionary<string, object?>)((Dictionary<string, object?>)Pca.ParseJson(PrimText)!)["primitives"]!;
 
     static List<Dictionary<string, object?>> Section(string k) =>
-        ((List<object?>)Prim.Value[k]!).Cast<Dictionary<string, object?>>().ToList();
+        ((List<object?>)Prim[k]!).Cast<Dictionary<string, object?>>().ToList();
 
     [Fact]
     public void ThresholdSet_MatchesReference()
     {
         var bad = new List<string>();
         int ran = 0;
+        var supported = Supported;
         foreach (var e in Section("threshold_set"))
         {
-            if (e.TryGetValue("requires", out var r) && r is string req && !Supported.Contains(req)) continue;
+            if (e.TryGetValue("requires", out var r) && r is string req && !supported.Contains(req)) continue;
             ran++;
             bool want = (bool)e["valid"]!;
             bool got;
@@ -84,7 +85,7 @@ public class R6Tests
                         {
                             var i = (Dictionary<string, object?>)input!;
                             long now = long.Parse(((Num)i["now"]!).Raw, System.Globalization.CultureInfo.InvariantCulture);
-                            var v = Pca.VerifyRaw((string)i["text"]!, (Dictionary<string, object?>)i["grant"]!, now, (string)i["aud"]!);
+                            var v = Pca.VerifyRaw((string)i["text"]!, (Dictionary<string, object?>)i["grant"]!, now, (string)i["aud"]!, planRoots: PlanRootPolicy.Skip);
                             if (v.Allow) bad.Add(name + ": allowed");
                             break;
                         }
@@ -150,7 +151,7 @@ public class R6Tests
                 {
                     var i = (Dictionary<string, object?>)input!;
                     long now = long.Parse(((Num)i["now"]!).Raw, System.Globalization.CultureInfo.InvariantCulture);
-                    return Pca.VerifyRaw((string)i["text"]!, (Dictionary<string, object?>)i["grant"]!, now, (string)i["aud"]!).Allow;
+                    return Pca.VerifyRaw((string)i["text"]!, (Dictionary<string, object?>)i["grant"]!, now, (string)i["aud"]!, planRoots: PlanRootPolicy.Skip).Allow;
                 }
             case "json_parse":
                 try { Pca.Canonicalize(Pca.ParseStrict((string)((Dictionary<string, object?>)input!)["text"]!)); return true; }

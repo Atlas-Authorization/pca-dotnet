@@ -62,15 +62,15 @@ public static class Snapshot
         var ip = ctx.GetValueOrDefault("intent_policy_json") is string ipj ? IntentPolicy.FromJsonText(ipj) : IntentPolicy.FromJson(ctx.GetValueOrDefault("intent_policy"));
         var v2 = ctx.ContainsKey("intent_v2") ? IntentV2Context.FromJson(ctx["intent_v2"]) : null;
         return v.ContainsKey("pcactn_json")
-            ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed, ip, v2)
-            : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed, ip, v2);
+            ? Pca.VerifyRaw((string)v["pcactn_json"]!, grant, now, aud, allowed, ip, v2, planRoots: PlanRootPolicy.Skip)
+            : Pca.VerifyPcactnCore(v["pcactn"], grant, now, aud, allowed, ip, v2, planRoots: PlanRootPolicy.Skip);
     }
 
     static Dictionary<string, object?>? core, adv;
     static List<JsonElement>? inputs;
     static Dictionary<string, string>? snap;
 
-    public static Dictionary<string, object?> Core() => core ??= (Dictionary<string, object?>)Pca.ParseJson(File.ReadAllText(Path.Combine(Root(), "packages", "pca", "conformance", "vectors.json")))!;
+    public static Dictionary<string, object?> Core() => core ??= (Dictionary<string, object?>)FixtureJson.Parse(File.ReadAllText(Path.Combine(Root(), "packages", "pca", "conformance", "vectors.json")))!;
 
     public static Dictionary<string, object?> Adv()
     {
@@ -78,7 +78,7 @@ public static class Snapshot
         using var fs = File.OpenRead(Path.Combine(Root(), "packages", "pca", "conformance", "vectors-adversarial.json.gz"));
         using var gz = new GZipStream(fs, CompressionMode.Decompress);
         using var sr = new StreamReader(gz, new UTF8Encoding(false));
-        return adv = (Dictionary<string, object?>)Pca.ParseJson(sr.ReadToEnd())!;
+        return adv = (Dictionary<string, object?>)FixtureJson.Parse(sr.ReadToEnd())!;
     }
 
     public static List<JsonElement> Inputs()
@@ -124,7 +124,7 @@ public static class Snapshot
                     var ip = c.TryGetProperty("intent_policy_json", out var ipjEl) && ipjEl.ValueKind == JsonValueKind.String ? IntentPolicy.FromJsonText(ipjEl.GetString()!)
                         : c.TryGetProperty("intent_policy", out var ipEl) ? IntentPolicy.FromJson(Pca.ParseJson(ipEl.GetRawText())) : null;
                     var v2 = c.TryGetProperty("intent_v2", out var v2El) ? IntentV2Context.FromJson(Pca.ParseJson(v2El.GetRawText())) : null;
-                    return Fmt(Pca.VerifyRaw(raw, grant, c.GetProperty("now").GetInt64(), c.GetProperty("aud").GetString()!, allowed, ip, v2));
+                    return Fmt(Pca.VerifyRaw(raw, grant, c.GetProperty("now").GetInt64(), c.GetProperty("aud").GetString()!, allowed, ip, v2, planRoots: PlanRootPolicy.Skip));
                 });
             }
             else val = ParseOutcome(raw, false) + "|len=" + ParseOutcome(raw, true);
