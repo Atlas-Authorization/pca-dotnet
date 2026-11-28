@@ -2,6 +2,15 @@
   <Project Path="AtlasPca.AspNetCore.Tests/AtlasPca.AspNetCore.Tests.csproj" />
   <Project Path="AtlasPca.AspNetCore/AtlasPca.AspNetCore.csproj" />
   <Project Path="AtlasPca.Corpus.Tests/AtlasPca.Corpus.Tests.csproj" />
+  <Project Path="AtlasPca.Mpc.Tests/AtlasPca.Mpc.Tests.csproj" />
+  <Project Path="AtlasPca.Mpc/AtlasPca.Mpc.csproj" />
+  <Project Path="AtlasPca.MpcParty/AtlasPca.MpcParty.csproj" />
+  <Project Path="AtlasPca.Wasm.Tests/AtlasPca.Wasm.Tests.csproj" />
+  <Project Path="AtlasPca.Wasm/AtlasPca.Wasm.csproj" />
+  <Project Path="AtlasPca.ExtensionsAI.Tests/AtlasPca.ExtensionsAI.Tests.csproj" />
+  <Project Path="AtlasPca.ExtensionsAI/AtlasPca.ExtensionsAI.csproj" />
+  <Project Path="AtlasPca.SemanticKernel.Tests/AtlasPca.SemanticKernel.Tests.csproj" />
+  <Project Path="AtlasPca.SemanticKernel/AtlasPca.SemanticKernel.csproj" />
   <Project Path="AtlasPca/AtlasPca.csproj" />
   <Project Path="ConformanceRunner/ConformanceRunner.csproj" />
 </Solution>

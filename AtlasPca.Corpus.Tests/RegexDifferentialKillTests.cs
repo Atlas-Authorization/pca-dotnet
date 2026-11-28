@@ -18,7 +18,10 @@ public class RegexDifferentialKillTests
 {
     const int Reachable = 100;
 
-    static readonly Lazy<D> Data = new(() =>
+    static readonly string DataText = LoadText();
+    static D Data => (D)Pca.ParseJson(DataText)!;
+
+    static string LoadText()
     {
         var d = AppContext.BaseDirectory;
         for (int i = 0; i < 12 && d != null; i++, d = Path.GetDirectoryName(d))
@@ -28,12 +31,12 @@ public class RegexDifferentialKillTests
             if (!File.Exists(f)) continue;
             using var gz = new GZipStream(File.OpenRead(f), CompressionMode.Decompress);
             using var sr = new StreamReader(gz, new UTF8Encoding(false));
-            return (D)Pca.ParseJson(sr.ReadToEnd())!;
+            return sr.ReadToEnd();
         }
         throw new FileNotFoundException("test-data/killRegex.json.gz");
-    });
+    }
 
-    static L Sec(string k) => (L)Data.Value[k]!;
+    static L Sec(string k) => (L)Data[k]!;
     static long N(object? o) => o is Num n ? long.Parse(n.Raw) : Convert.ToInt64(o);
     static bool? Want(long r) => r < 0 ? null : r == 1;
 
@@ -109,32 +112,27 @@ public class RegexDifferentialKillTests
         }
     });
 
-    /// <summary>The budget is private to SafeRegex (one per document, opened by WithBudget); reached by reflection. The .NET
+    /// <summary>The per-document budget (opened by WithBudget). The .NET
     /// budget keeps no refusal counter (the TS one counts refusals for diagnostics only), so that column is not compared.</summary>
     [Fact]
     public void BudgetSequencesAgree()
     {
-        var t = typeof(SafeRegex).GetNestedType("Budget", BindingFlags.NonPublic)!;
-        var charge = t.GetMethod("Charge", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var fEv = t.GetField("evaluations", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var fCh = t.GetField("chars", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        var fSt = t.GetField("steps", BindingFlags.NonPublic | BindingFlags.Instance)!;
         int k = 0;
         foreach (D b in Sec("budgets"))
         {
-            var budget = Activator.CreateInstance(t, nonPublic: true)!;
+            var budget = new RegexBudget();
             var ops = (L)b["ops"]!;
             var res = (L)b["res"]!;
             for (int i = 0; i < ops.Count; i++)
             {
                 var op = (L)ops[i]!;
-                var got = (bool)charge.Invoke(budget, new object?[] { (string)op[0]!, (int)N(op[1]) })!;
+                var got = budget.Charge((string)op[0]!, (int)N(op[1]));
                 Assert.True((bool)res[i]! == got, $"budget #{k} op {i}");
             }
             var fin = (L)b["fin"]!;
-            Assert.Equal(N(fin[0]), (long)(int)fEv.GetValue(budget)!);
-            Assert.Equal(N(fin[1]), (long)(int)fCh.GetValue(budget)!);
-            Assert.Equal(N(fin[2]), (long)fSt.GetValue(budget)!);
+            Assert.Equal(N(fin[0]), (long)budget.Evaluations);
+            Assert.Equal(N(fin[1]), (long)budget.Chars);
+            Assert.Equal(N(fin[2]), budget.Steps);
             k++;
         }
     }

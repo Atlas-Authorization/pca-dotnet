@@ -2,9 +2,11 @@
   "stryker-config": {
     "project": "AtlasPca.csproj",
     "test-projects": [
-      "AtlasPca.Corpus.Tests.csproj"
+      "AtlasPca.Corpus.Tests.csproj",
+      "../AtlasPca.AspNetCore.Tests/AtlasPca.AspNetCore.Tests.csproj"
     ],
     "mutation-level": "Complete",
+    "language-version": "CSharp12",
     "reporters": [
       "json",
       "progress"
@@ -15,9 +17,10 @@
       "low": 100,
       "break": 0
     },
+    "mutate": ["!GoalKernel/Generated/**/*.cs"],
     "ignore-mutations": [],
     "disable-bail": false,
-    "coverage-analysis": "all",
+    "coverage-analysis": "perTest",
     "additional-timeout": 60000,
     "test-case-filter": "Category!=Huge"
   }

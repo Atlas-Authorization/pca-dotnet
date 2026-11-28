@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Opt-in WebAssembly hosts for the sandbox handle table: an in-process core-module host on the Wasmtime NuGet package (fuel, epoch deadline,
+       store memory cap, no WASI) and a component host that drives the pinned reference wasmtime host binary. A separate assembly so the core
+       library takes no native engine dependency. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AtlasPca.Wasm</RootNamespace>
+    <IsPackable>true</IsPackable>
+    <Version>0.6.0</Version>
+    <Description>WebAssembly hosts for the PCA sandbox handle table (in-process core modules on Wasmtime, components on the pinned reference host the package carries).</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Wasmtime" Version="50.0.1" />
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AtlasPca.Wasm.Tests" />
+  </ItemGroup>
+  <!-- The native libraries ship per RID in runtimes/<rid>/native (built by the native-package workflow). PackNativeRequired=true (the release job) makes a pack without all of them fail. -->
+  <ItemGroup>
+    <None Include="runtimes/**/native/*" Pack="true" PackagePath="%(Identity)" Visible="false" />
+  </ItemGroup>
+  <Target Name="RequireNatives" BeforeTargets="_GetPackageFiles" Condition="'$(PackNativeRequired)' == 'true'">
+    <ItemGroup>
+      <_Native Include="runtimes/linux-x64/native/pca-wasmtime-host;runtimes/linux-arm64/native/pca-wasmtime-host;runtimes/osx-x64/native/pca-wasmtime-host;runtimes/osx-arm64/native/pca-wasmtime-host;runtimes/win-x64/native/pca-wasmtime-host.exe;runtimes/linux-x64/native/pca-wasmtime-host.sha256;runtimes/linux-arm64/native/pca-wasmtime-host.sha256;runtimes/osx-x64/native/pca-wasmtime-host.sha256;runtimes/osx-arm64/native/pca-wasmtime-host.sha256;runtimes/win-x64/native/pca-wasmtime-host.sha256" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_Native.Identity)')" Text="native library missing from the package inputs: %(_Native.Identity)" />
+  </Target>
+</Project>

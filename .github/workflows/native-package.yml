@@ -1,0 +1,231 @@
+name: Native package
+
+# The NuGet packages carry their native libraries under runtimes/<rid>/native, so each opt-in module works after a plain install: AtlasPca carries
+# libatlasada and libatlas_less (LESS), AtlasPca.Pairing blst plus the GT shim, AtlasPca.MpcLweOt liblweot,
+# AtlasPca.Fndsa libfndsa, AtlasPca.Wasm the pinned reference wasmtime host (with its SHA-256 pin beside it); AtlasPca.Fhe depends on the
+# Microsoft.Research.SEALNet package and adds libsealc (SEAL 4.1.2's C export library, the one SEALNet imports as "sealc") for all five RIDs: the
+# SEALNet package itself ships sealc only for win-x64, linux-x64 and osx-x64 (x86-64), not for any arm64 platform. The libraries below are built on native runners (the Rust ones with the flagship crates).
+# libatlasada (the Ada IDNA shim that the Jose and Oauth URL hosts and CIBA words need) is built from the pinned single-file Ada release (SHA-256
+# verified); libsodium comes from the official libsodium NuGet package. The packages are packed with every library required, the built .nupkgs
+# are checked for them, and each is then installed on a clean runner (no checkout) and exercised.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_NOLOGO: '1'
+  ADA_TAG: v4.0.0
+  ADA_CPP_SHA256: 1c722f8f5355d6bf2bf3601870684edc875aa8f56b4d4735440d96263dd0207c
+  ADA_H_SHA256: 0010b17b3ff489e13998e86d921b16e1643e370ee3276c584f1b0c4b72bdf628
+
+jobs:
+  libatlasada:
+    name: libatlasada ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { rid: linux-x64, os: ubuntu-22.04, file: libatlasada.so }
+          - { rid: linux-arm64, os: ubuntu-22.04-arm, file: libatlasada.so }
+          - { rid: osx-arm64, os: macos-14, file: libatlasada.dylib }
+          - { rid: osx-x64, os: macos-14, file: libatlasada.dylib, cxxflags: '-arch x86_64' }
+          - { rid: win-x64, os: windows-2022, file: atlasada.dll }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build libatlasada
+        shell: bash
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        env:
+          ATLAS_ADA_CXXFLAGS: ${{ matrix.cxxflags }}
+        run: |
+          set -euo pipefail
+          lib="$(bash native/ada/build.sh "$RUNNER_TEMP/ada" | tail -1)"
+          mkdir -p "AtlasPca/runtimes/${{ matrix.rid }}/native"
+          cp "$lib" "AtlasPca/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}"
+          file "AtlasPca/runtimes/${{ matrix.rid }}/native/${{ matrix.file }}" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libatlasada-${{ matrix.rid }}
+          path: ${{ env.PCA_MONO_SDK }}/AtlasPca/runtimes
+          if-no-files-found: error
+
+  natives:
+    name: natives ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { rid: linux-x64, os: ubuntu-latest }
+          - { rid: linux-arm64, os: ubuntu-24.04-arm }
+          - { rid: osx-x64, os: macos-15-intel }
+          - { rid: osx-arm64, os: macos-latest }
+          - { rid: win-x64, os: windows-latest }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - name: blst at the pinned tag
+        shell: bash
+        run: git clone --quiet --depth 1 --branch v0.3.16 https://github.com/supranational/blst "$RUNNER_TEMP/blst"
+      - name: Build the native libraries into the package layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          MONO="$(cd "$PCA_MONO_SDK/../.." && pwd)"
+          S="$RUNNER_TEMP/stage"; rid='${{ matrix.rid }}'
+          dest() { mkdir -p "$S/$1/runtimes/$rid/native"; echo "$S/$1/runtimes/$rid/native"; }
+          sh="$GITHUB_WORKSPACE/.github/scripts"
+          [ "$RUNNER_OS" = Windows ] && { export CC=gcc; gtname=blst; } || gtname=libblst.dll
+          # blst plus the GT shim as one library named for DllImport("blst.dll") (blst.dll; libblst.dll.so / .dylib elsewhere)
+          cp "$(bash "$sh/build-libpcagt.sh" "$RUNNER_TEMP/blst" "$PCA_MONO_SDK/AtlasPca.Pairing/Native/pca_gt.c" "$RUNNER_TEMP/gt" "$gtname" | tail -1)" "$(dest AtlasPca.Pairing)/"
+          for m in lweot:pca-mpc-lwe-ot-wasm:AtlasPca.MpcLweOt fndsa:pca-fndsa-wasm:AtlasPca.Fndsa pcazk:pca-zk:AtlasPca.Zk; do
+            IFS=: read -r lib crate mod <<<"$m"
+            bash "$sh/build-lib$lib.sh" "$RUNNER_TEMP/$lib" "$MONO/packages/$crate/crate" >/dev/null
+            find "$RUNNER_TEMP/$lib" -maxdepth 1 -type f ! -name '*.h' -exec cp {} "$(dest $mod)/" \;
+          done
+          host="$(bash "$sh/build-wasmtime-host.sh" "$RUNNER_TEMP/host" "$MONO/packages/pca-sandbox/wasmtime-host" | tail -1)"
+          cp "$host" "$(dest AtlasPca.Wasm)/"
+          { sha256sum "$host" 2>/dev/null || shasum -a 256 "$host"; } | cut -d' ' -f1 > "$(dest AtlasPca.Wasm)/pca-wasmtime-host.sha256"
+          # LESS (on Windows the script builds with mingw-w64 gcc, CC=gcc exported above)
+          cp "$(bash "$PCA_MONO_SDK/../pca-less-c/build.sh" "$RUNNER_TEMP/less" | tail -1)" "$(dest AtlasPca)/"
+          # SEAL's C export library (SEALNet's "sealc"), built per RID; on Windows the script uses the MSVC multi-config output
+          sealdir="$(bash "$sh/build-libsealc.sh" v4.1.2 "$RUNNER_TEMP/seal" | tail -1)"
+          find "$sealdir" -maxdepth 1 \( -name libsealc.so -o -name libsealc.dylib -o -name sealc.dll \) -exec cp -L {} "$(dest AtlasPca.Fhe)/" \;
+          find "$S" -type f
+      - uses: actions/upload-artifact@v4
+        with:
+          name: natives-${{ matrix.rid }}
+          path: ${{ runner.temp }}/stage
+          if-no-files-found: error
+
+  pack:
+    name: pack and check the package
+    needs: [libatlasada, natives]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source layout (full shared corpus from the flagship)
+        shell: bash
+        run: .github/scripts/fetch-flagship-corpus.sh --mono dotnet-pca
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: libatlasada-*
+          path: ${{ env.PCA_MONO_SDK }}/AtlasPca/runtimes
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: natives-*
+          path: ${{ env.PCA_MONO_SDK }}
+          merge-multiple: true
+      - name: Pack every package with its libraries required
+        working-directory: ${{ env.PCA_MONO_SDK }}
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 --branch v0.3.16 https://github.com/supranational/blst "$RUNNER_TEMP/blst"
+          mkdir -p AtlasPca.Pairing/Blst && cp "$RUNNER_TEMP/blst/bindings/c#/supranational.blst.cs" AtlasPca.Pairing/Blst/blst.cs # the official binding, compiled into the package
+          for p in AtlasPca AtlasPca.Mpc AtlasPca.Pairing AtlasPca.Fhe AtlasPca.MpcLweOt AtlasPca.Fndsa AtlasPca.Zk AtlasPca.Wasm; do
+            dotnet pack $p/$p.csproj -c Release -p:PackNativeRequired=true -o "$RUNNER_TEMP/nupkg"
+          done
+      - name: The built packages carry their libraries
+        run: |
+          set -euo pipefail
+          has() { local listing; listing="$(unzip -l "$RUNNER_TEMP/nupkg/$1.0.6.0.nupkg")"; shift; for f in "$@"; do grep -q " runtimes/$f\$" <<<"$listing" || { echo "::error::package lacks $f"; exit 1; }; done; }
+          unix="linux-x64 linux-arm64"; mac="osx-x64 osx-arm64"
+          chk() { # <package> <linux/mac/win file names...> is expanded per RID
+            local pkg="$1" l="$2" m="$3" w="$4" r files=()
+            for r in $unix; do files+=("$r/native/$l"); done; for r in $mac; do files+=("$r/native/$m"); done; files+=("win-x64/native/$w")
+            has "$pkg" "${files[@]}"
+          }
+          chk AtlasPca libatlasada.so libatlasada.dylib atlasada.dll
+          chk AtlasPca libatlas_less.so libatlas_less.dylib atlas_less.dll
+          chk AtlasPca.Fhe libsealc.so libsealc.dylib sealc.dll
+          chk AtlasPca.Pairing libblst.dll.so libblst.dll.dylib blst.dll
+          chk AtlasPca.MpcLweOt liblweot.so liblweot.dylib lweot.dll
+          chk AtlasPca.Fndsa libfndsa.so libfndsa.dylib fndsa.dll
+          chk AtlasPca.Zk libpcazk.so libpcazk.dylib pcazk.dll
+          chk AtlasPca.Wasm pca-wasmtime-host pca-wasmtime-host pca-wasmtime-host.exe
+          chk AtlasPca.Wasm pca-wasmtime-host.sha256 pca-wasmtime-host.sha256 pca-wasmtime-host.sha256
+          unzip -p "$RUNNER_TEMP/nupkg/AtlasPca.Fhe.0.6.0.nupkg" AtlasPca.Fhe.nuspec | grep -q 'Microsoft.Research.SEALNet' || { echo "::error::AtlasPca.Fhe does not depend on SEALNet"; exit 1; }
+          echo "every package carries its libraries"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: ${{ runner.temp }}/nupkg
+
+  # Installs the BUILT packages on a clean runner (no checkout, no toolchain variables) and loads each library with a minimal call.
+  smoke:
+    name: install and load ${{ matrix.rid }}
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # LESS and SEAL are loaded on every platform (win-x64 LESS is mingw-built; arm64 SEAL is the package's own libsealc)
+          - { rid: linux-x64, os: ubuntu-latest, less: 'true', fhe: 'true' }
+          - { rid: linux-arm64, os: ubuntu-24.04-arm, less: 'true', fhe: 'true' }
+          - { rid: osx-x64, os: macos-15-intel, less: 'true', fhe: 'true' }
+          - { rid: osx-arm64, os: macos-latest, less: 'true', fhe: 'true' }
+          - { rid: win-x64, os: windows-latest, less: 'true', fhe: 'true' }
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/download-artifact@v4
+        with:
+          name: nupkg
+          path: ${{ runner.temp }}/nupkg
+      - name: Install the packages into a fresh app and run it
+        shell: bash
+        env:
+          WANT_LESS: ${{ matrix.less }}
+          WANT_FHE: ${{ matrix.fhe }}
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/smoke-app"; mkdir -p "$app" && cd "$app"
+          dotnet new console --framework net8.0 --no-restore >/dev/null
+          for p in AtlasPca AtlasPca.Pairing AtlasPca.MpcLweOt AtlasPca.Fndsa AtlasPca.Zk AtlasPca.Wasm AtlasPca.Fhe; do
+            dotnet add package "$p" --version 0.6.0 --source "$RUNNER_TEMP/nupkg" --source https://api.nuget.org/v3/index.json >/dev/null
+          done
+          cat > Program.cs <<'CS'
+          using AtlasPca;
+          using AtlasPca.Fndsa.Native;
+          using AtlasPca.Mpc.LweOt;
+          using AtlasPca.Pairing;
+          using AtlasPca.Wasm;
+          using AtlasPca.Zk;
+          using supranational.blst;
+
+          static void Check(string what, bool ok) { Console.WriteLine($"{what}: {(ok ? "ok" : "FAILED")}"); if (!ok) Environment.Exit(1); }
+          Check("pairing (blst + GT shim)", Gt.IsElement(Gt.Pairing(P1.generator(), P2.generator())));
+          Check("lwe-ot (liblweot)", Lattice.Available());
+          Check("fn-dsa (libfndsa)", NativeFnDsa.Available());
+          Check("groth16 (libpcazk)", ZkNative.Available());
+          ZkNative.Register();
+          Check("groth16 engine of the core's zk checks", ZkCompliance.Groth16EngineRegistered && ZkCompliance.CircuitVersion("pca-policyvm-v1")["circom"] is string);
+          var host = WasmHost.PackagedHost();
+          Check("sandbox host (pinned, packaged)", host != null && File.Exists(host.Path) && host.ExpectedSha256!.Length == 64);
+          if (Environment.GetEnvironmentVariable("WANT_LESS") == "true") Check("less (libatlas_less)", Pq.Suites.ContainsKey("less-cat1"));
+          if (Environment.GetEnvironmentVariable("WANT_FHE") == "true") Check("fhe (SEALNet)", AtlasPca.Fhe.FheSeal.Keygen() != null);
+          CS
+          dotnet run -c Release

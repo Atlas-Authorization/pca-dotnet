@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Groth16 for AtlasPca: the pairing check and the prover for snarkjs / circom artifacts on BN254 and BLS12-381, through P/Invoke over libpcazk (built from the
+       flagship's pca-zk crate with cargo and the capi feature). A separate, opt-in assembly so the core library gains no native dependency: the core's zk
+       compliance checks (ZkCompliance) take their pairing engine from here through ZkNative.Register(). The library is found
+       through ATLAS_PCA_LIBPCAZK, else the copy this package carries under runtimes/<rid>/native, else the system loader path. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>AtlasPca.Zk</RootNamespace>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsPackable>true</IsPackable>
+    <Version>0.6.0</Version>
+    <Description>Groth16 verification and proving (BN254, BLS12-381) for AtlasPca, with the libpcazk native library for every supported platform.</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AtlasPca.Zk.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- the core library: ZkNative.Register() makes this library the Groth16 engine of its ZkCompliance (the core never references this assembly) -->
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+  </ItemGroup>
+  <!-- The native libraries ship per RID in runtimes/<rid>/native (built by the native-package workflow). PackNativeRequired=true (the release job) makes a pack without all of them fail. -->
+  <ItemGroup>
+    <None Include="runtimes/**/native/*" Pack="true" PackagePath="%(Identity)" Visible="false" />
+  </ItemGroup>
+  <Target Name="RequireNatives" BeforeTargets="_GetPackageFiles" Condition="'$(PackNativeRequired)' == 'true'">
+    <ItemGroup>
+      <_Native Include="runtimes/linux-x64/native/libpcazk.so;runtimes/linux-arm64/native/libpcazk.so;runtimes/osx-x64/native/libpcazk.dylib;runtimes/osx-arm64/native/libpcazk.dylib;runtimes/win-x64/native/pcazk.dll" />
+    </ItemGroup>
+    <Error Condition="!Exists('%(_Native.Identity)')" Text="native library missing from the package inputs: %(_Native.Identity)" />
+  </Target>
+</Project>

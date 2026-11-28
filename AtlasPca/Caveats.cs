@@ -24,7 +24,7 @@ public static class Caveats
     /// unsatisfied types, in order (<c>"&lt;malformed&gt;"</c> when a caveat's type is not a string).</summary>
     public sealed record Result(bool Ok, IReadOnlyList<string> Failed);
 
-    static readonly string[] ReversibilityOrder = { "reversible", "rate_limited", "irreversible" };
+    static string[] ReversibilityOrder => new string[] { "reversible", "rate_limited", "irreversible" };
 
     /// <summary>The ROOT grant's caveats the policy layer evaluates: <c>grant.caveats</c> without its FIRST <c>envelope</c>
     /// caveat (order kept; a second envelope stays and is unsatisfied). A non-list <c>caveats</c> is returned as is (and refused
@@ -114,6 +114,17 @@ public static class Caveats
             default:
                 return false;
         }
+    }
+
+    /// <summary>The action's spend in USD as <c>max_spend</c> reads it: its own <c>action.params.amount</c> (finite, at least 0) with an own <c>currency</c>, when present, of
+    /// <c>usd</c> or <c>USD</c>. Null: no readable spend.</summary>
+    public static double? ActionSpendUsd(object? action)
+    {
+        if (action is not Dictionary<string, object?> a || !a.TryGetValue("action", out var o) || o is not Dictionary<string, object?> act) return null;
+        if (!act.TryGetValue("params", out var po) || po is not Dictionary<string, object?> p || !p.TryGetValue("amount", out var amt)) return null;
+        if (Fin(amt) is not double amount || amount < 0) return null;
+        if (p.TryGetValue("currency", out var cur) && !(cur is "usd" or "USD")) return null;
+        return amount;
     }
 
     /// <summary><c>max_spend {usd}</c>: <c>usd</c> a finite number &gt;= 0; <c>ctx.action.params</c> an object with an own finite

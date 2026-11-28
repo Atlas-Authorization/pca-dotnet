@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Replays the pairing cases of the shared zk reference corpus (ref-zk.json.gz, the copy in AtlasPca.Corpus.Tests/test-data) through AtlasPca.Zk over libpcazk
+       (ATLAS_PCA_LIBPCAZK, or the packaged copy), directly and through the core's verifier with this library registered as its engine.
+       ATLAS_PCA_LIBPCAZK_REQUIRED=1 makes a missing library fail instead of skip. -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RollForward>Major</RollForward>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../AtlasPca/AtlasPca.csproj" />
+    <ProjectReference Include="../AtlasPca.Zk/AtlasPca.Zk.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- the shared differential-oracle harness and the replay of the engine functions, the same code the core tests run under recorded verdicts -->
+    <Compile Include="../AtlasPca.Corpus.Tests/Base.cs" Link="Base.cs" />
+    <Compile Include="../AtlasPca.Corpus.Tests/FixtureJson.cs" Link="FixtureJson.cs" />
+    <Compile Include="../AtlasPca.Corpus.Tests/ZkReplay.cs" Link="ZkReplay.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="../AtlasPca.Corpus.Tests/test-data/ref-zk.json.gz" Link="test-data/ref-zk.json.gz" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
